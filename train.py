@@ -43,8 +43,8 @@ except ImportError:
 
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(f'Hyperparameters {hyp}')
-    save_dir, epochs, batch_size, total_batch_size, weights, rank = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
+    save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze = \
+        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
 
     # Directories
     wdir = save_dir / 'weights'
@@ -90,7 +90,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         model = Model(opt.cfg, ch=3, nc=nc).to(device)  # create
 
     # Freeze
-    freeze = []  # parameter names to freeze (full or partial)
+    freeze = [f'model.{x}.' for x in range(freeze)]  # parameter names to freeze (full or partial)
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
@@ -508,6 +508,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/train', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--freeze', type=int, default=0, help='Number of layers to freeze. backbone= check the model, all=24')
     opt = parser.parse_args()
 
     # Set DDP variables
@@ -594,20 +595,24 @@ if __name__ == '__main__':
                 'mixup': (1, 0.0, 1.0)}  # image mixup (probability)
 
         assert opt.local_rank == -1, 'DDP mode not implemented for --evolve'
+        with open(opt.hyp) as f:
+            hyp = yaml.safe_load(f)  # load hyps dict
+            if 'anchors' not in hyp:  # anchors commented in hyp.yaml
+                hyp['anchors'] = 3
         opt.notest, opt.nosave = True, True  # only test/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
         yaml_file = Path(opt.save_dir) / 'hyp_evolved.yaml'  # save best result here
         if opt.bucket:
             os.system('gsutil cp gs://%s/evolve.txt .' % opt.bucket)  # download evolve.txt if exists
 
-        for _ in range(300):  # generations to evolve
+        for _ in range(50):  # generations to evolve
             if Path('evolve.txt').exists():  # if evolve.txt exists: select best hyps and mutate
                 # Select parent(s)
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
                 x = np.loadtxt('evolve.txt', ndmin=2)
                 n = min(5, len(x))  # number of previous results to consider
                 x = x[np.argsort(-fitness(x))][:n]  # top n mutations
-                w = fitness(x) - fitness(x).min()  # weights
+                w = fitness(x) - fitness(x).min() + 1E-6 # weights
                 if parent == 'single' or len(x) == 1:
                     # x = x[random.randint(0, n - 1)]  # random selection
                     x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
