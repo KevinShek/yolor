@@ -5,3 +5,4 @@ __pycache__
 *.onnx
 evolve.png
 evolve.txt
+wandb

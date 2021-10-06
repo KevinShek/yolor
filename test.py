@@ -3,20 +3,28 @@ import glob
 import json
 import os
 from pathlib import Path
+from matplotlib.pyplot import pause
 
 import numpy as np
 import torch
+from torch.utils.data import dataset
 import yaml
 from tqdm import tqdm
 
 from models.experimental import attempt_load
-from utils.datasets import create_dataloader
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, \
+from utils.datasets import create_dataloader, LoadImages
+from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, check_suffix, check_requirements, \
     non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, clip_coords, set_logging, increment_path
 from utils.loss import compute_loss
 from utils.metrics import ap_per_class
 from utils.plots import plot_images, output_to_target
-from utils.torch_utils import select_device, time_synchronized
+from utils.torch_utils import select_device, time_synchronized, load_classifier
+
+def load_classes(path):
+    # Loads *.names file at 'path'
+    with open(path, 'r') as f:
+        names = f.read().split('\n')
+    return list(filter(None, names))  # filter removes empty strings (such as last line)
 
 
 def test(data,
@@ -46,30 +54,62 @@ def test(data,
         set_logging()
         device = select_device(opt.device, batch_size=batch_size)
         save_txt = opt.save_txt  # save *.txt labels
+        # Half
+        half = device.type != 'cpu'  # half precision only supported on CUDA
 
         # Directories
         save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = attempt_load(weights, map_location=device)  # load FP32 model
-        imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
+        # model = attempt_load(weights, map_location=device)  # load FP32 model
+        w = weights[0] if isinstance(weights, list) else weights
+        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '']
+        check_suffix(w, suffixes)  # check weights have acceptable suffix
+        pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
+        stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
+        if pt:
+            model = attempt_load(weights, map_location=device)  # load FP32 model
+            stride = int(model.stride.max())  # model stride
+            names = model.module.names if hasattr(model, 'module') else model.names  # get class names
+            if half:
+                model.half()
+            if classify:  # second-stage classifier
+                modelc = load_classifier(name='resnet50', n=2)  # initialize
+                modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
+        elif onnx:
+            # check_requirements(('onnx', 'onnxruntime'))
+            import onnxruntime
+
+            if opt.device == "0":
+                providers = [
+                ('CUDAExecutionProvider', {
+                    'device_id': 0,
+                    'arena_extend_strategy': 'kNextPowerOfTwo',
+                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
+                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                    'do_copy_in_default_stream': True,
+                }),
+                'CPUExecutionProvider',
+                ]
+                session = onnxruntime.InferenceSession(w, providers=providers)
+                print("device 0 is selected")
+            else:
+                session = onnxruntime.InferenceSession(w, None)
+            names = names
+        imgsz = check_img_size(imgsz, s=stride)  # check img_size
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
         # if device.type != 'cpu' and torch.cuda.device_count() > 1:
         #     model = nn.DataParallel(model)
 
-    # Half
-    half = device.type != 'cpu'  # half precision only supported on CUDA
-    if half:
-        model.half()
 
     # Configure
-    model.eval()
+    # model.eval()
     is_coco = data.endswith('coco.yaml')  # is COCO dataset
     with open(data) as f:
         data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-    check_dataset(data)  # check
+    # check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
@@ -84,30 +124,51 @@ def test(data,
     # Dataloader
     if not training:
         img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
-        _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
+        # _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
         path = data['test'] if opt.task == 'test' else data['val']  # path to val/test images
-        dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=True)[0]
+        # dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=True)[0]
+        dataloader, dataset = create_dataloader(path, imgsz, batch_size, stride, opt, pad=0.5, rect=True)
+
+    # Dataset
+    # dataset = LoadImages(path, img_size=imgsz, auto_size=64)
 
     seen = 0
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    try:
+        names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    except:
+        names = load_classes(opt.names)
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
-        img = img.to(device, non_blocking=True)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
+    # img = img.to(device, non_blocking=True)
+    # img = img.half() if half else img.float()  # uint8 to fp16/32
+        if onnx:
+            img = img.numpy()
+            img = img.astype('float32')
+            # img = torch.from_numpy(img).to(device)
+        else:
+            img = img.to(device, non_blocking=True)
+            img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
         nb, _, height, width = img.shape  # batch size, channels, height, width
+        # height, width = img.shape  # batch size, channels, height, width
         whwh = torch.Tensor([width, height, width, height]).to(device)
 
         # Disable gradients
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            inf_out, train_out = model(img, augment=augment)  # inference and training outputs
+            if pt:
+                inf_out, train_out = model(img, augment=augment)[0:2]
+            elif onnx:
+                inf_out = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+                if opt.device == "0": 
+                    inf_out = inf_out.to(device)
+            # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
             # Compute loss
@@ -146,10 +207,10 @@ def test(data,
             # W&B logging
             if plots and len(wandb_images) < log_imgs:
                 box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                             "class_id": int(cls),
-                             "box_caption": "%s %.3f" % (names[cls], conf),
-                             "scores": {"class_score": conf},
-                             "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
+                            "class_id": int(cls),
+                            "box_caption": "%s %.3f" % (names[cls], conf),
+                            "scores": {"class_score": conf},
+                            "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
                 boxes = {"predictions": {"box_data": box_data, "class_labels": names}}
                 wandb_images.append(wandb.Image(img[si], boxes=boxes, caption=path.name))
 
@@ -166,9 +227,9 @@ def test(data,
                 box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
                 for p, b in zip(pred.tolist(), box.tolist()):
                     jdict.append({'image_id': image_id,
-                                  'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
-                                  'bbox': [round(x, 3) for x in b],
-                                  'score': round(p[4], 5)})
+                                'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
+                                'bbox': [round(x, 3) for x in b],
+                                'score': round(p[4], 5)})
 
             # Assign all predictions as incorrect
             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
@@ -208,7 +269,7 @@ def test(data,
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
             plot_images(img, targets, paths, f, names)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
-            plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
+            plot_images(img, output_to_target(output), paths, f, names)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -222,6 +283,7 @@ def test(data,
 
     # W&B logging
     if plots and wandb:
+        # wandb.init() # for windows
         wandb.log({"Images": wandb_images})
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
@@ -231,13 +293,20 @@ def test(data,
 
     # Print results per class
     if verbose and nc > 1 and len(stats):
+        with open(save_dir / 'information.txt', 'a') as f:
+            f.write(('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95') + '\n')
+            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map) + '\n')
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+            with open(save_dir / 'information.txt', 'a') as f:
+                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]) + '\n')
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
+        with open(save_dir / 'information.txt', 'a') as f:
+            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n')
 
     # Save JSON
     if save_json and len(jdict):
@@ -267,7 +336,8 @@ def test(data,
     # Return results
     if not training:
         print('Results saved to %s' % save_dir)
-    model.float()  # for training
+    if pt:
+        model.float()  # for training
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
@@ -293,6 +363,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/test', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--names', type=str, default='data/coco.names', help='*.cfg path')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
