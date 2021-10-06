@@ -9,6 +9,7 @@ import random
 import re
 import subprocess
 import time
+import urllib
 from pathlib import Path
 from subprocess import check_output
 
@@ -76,6 +77,22 @@ def check_file(file):
         assert len(files) == 1, "Multiple files match '%s', specify exact path: %s" % (file, files)  # assert unique
         return files[0]  # return file
 
+
+def print_args(name, opt):
+    # Print argparser arguments
+    print(colorstr(f'{name}: ') + ', '.join(f'{k}={v}' for k, v in vars(opt).items()))
+
+
+def file_size(file):
+    # Return file size in MB
+    return Path(file).stat().st_size / 1e6
+
+
+def url2file(url):
+    # Convert URL to filename, i.e. https://url.com/file.txt?auth -> file.txt
+    url = str(Path(url)).replace(':/', '://')  # Pathlib turns :// -> :/
+    file = Path(urllib.parse.unquote(url)).name.split('?')[0]  # '%2F' to '/', split https://url.com/file.txt?auth
+    return file
 
 def check_dataset(dict):
     # Download dataset if not found locally
