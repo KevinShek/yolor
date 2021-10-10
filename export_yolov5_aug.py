@@ -127,6 +127,7 @@ def export_onnx(model, img, file, opset=13, train=False, dynamic=True, simplify=
         print(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
         print(
             f"{prefix} run --dynamic ONNX model inference with: 'python detect.py --weights {f}'")
+        return f
     except Exception as e:
         print(f'{prefix} export failure: {e}')
 
@@ -140,14 +141,19 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=1, help='batch size')
     parser.add_argument('--device', default='',
                         help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--include', nargs='+', default=['torchscript', 'onnx'],
+                        help='available formats are (torchscript, onnx, tflite)')
+    parser.add_argument('--optimize', action='store_true', help='TorchScript: optimize for mobile')                    
     opt = parser.parse_args()
     opt.img_size *= 2 if len(opt.img_size) == 1 else 1  # expand
     file = Path(opt.weights)
 
+    # selecting devices
     device = select_device(opt.device, batch_size=opt.batch_size)
     print(opt)
     set_logging()
     t = time.time()
+    include = [x.lower() for x in opt.include]
 
     # Load PyTorch model
     model = attempt_load(opt.weights, map_location=torch.device(device))  # load FP32 model
@@ -155,6 +161,7 @@ if __name__ == '__main__':
     model.eval()
     model = model.to(device)
 
+    # convert sync batchnorm
     model = convert_sync_batchnorm_to_batchnorm(model)
 
     # Checks
@@ -190,6 +197,25 @@ if __name__ == '__main__':
     model.model[-1].export = True  # set Detect() layer export=True
     y = model(img)  # dry run
 
+    # Exporting
+    if 'torchscript' in include:
+        export_torchscript(model, img, file, opt.optimize)
+    if 'onnx' in include:
+        f = export_onnx(model, img, file)
+    # TensorFlow Exports
+    if 'tflite' in include:
+        if f is None:
+            f = export_onnx(model, img, file)
+        
+        import onnx
+        from onnx_tf.backend import prepare
+
+        onnx_model = onnx.load(f)
+        tf_rep = prepare(onnx_model)
+        tf_rep.export_graph("weights/") # exporting tensorflow model
+
+
+
     # # TorchScript export
     # try:
     #     export_torchscript(model, img, file)
@@ -203,8 +229,8 @@ if __name__ == '__main__':
     #     print('TorchScript export failure: %s' % e)
 
     # ONNX export
-    try:
-        export_onnx(model, img, file)
+    # try:
+    #     export_onnx(model, img, file)
     #     import onnx
 
     #     print('\nStarting ONNX export with onnx %s...' % onnx.__version__)
@@ -217,8 +243,8 @@ if __name__ == '__main__':
     #     onnx.checker.check_model(onnx_model)  # check onnx model
     #     # print(onnx.helper.printable_graph(onnx_model.graph))  # print a human readable model
     #     print('ONNX export success, saved as %s' % f)
-    except Exception as e:
-        print('ONNX export failure: %s' % e)
+    # except Exception as e:
+    #     print('ONNX export failure: %s' % e)
 
     # # CoreML export
     # try:
@@ -235,5 +261,6 @@ if __name__ == '__main__':
         # print('CoreML export failure: %s' % e)
 
     # Finish
-    print('\nExport complete (%.2fs). Visualize with https://github.com/lutzroeder/netron.' %
-          (time.time() - t))
+    print(f'\nExport complete ({time.time() - t:.2f}s)'
+          f"\nResults saved to {colorstr('bold', file.parent.resolve())}"
+          f'\nVisualize with https://netron.app')
