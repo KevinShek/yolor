@@ -283,7 +283,7 @@ def test(data,
 
     # W&B logging
     if plots and wandb:
-        # wandb.init() # for windows
+        wandb.init(project="results") # for windows
         wandb.log({"Images": wandb_images})
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
@@ -306,7 +306,7 @@ def test(data,
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
         with open(save_dir / 'information.txt', 'a') as f:
-            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n')
+            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n\n')
 
     # Save JSON
     if save_json and len(jdict):
@@ -330,6 +330,21 @@ def test(data,
             eval.accumulate()
             eval.summarize()
             map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+
+            iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3} ] = {:0.3}'
+            titleStr = ["Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", 
+                        "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall"]
+            iouStr = ["0.50:0.95", "0.50", "0.75", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", 
+                        "0.50:0.95", "0.50:0.95"]
+            typeStr = ["(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)"]
+            areaRng = ["all", "all", "all", "small", "medium", "large", "all", "all", "all", "small", "medium", "large"]
+            maxDets = ["100", "100", "100", "100", "100", "100", "1", "100", "100", "100", "100", "100"]
+
+
+            with open(save_dir / 'information.txt', 'a') as f:
+                for i, c in enumerate(eval.stats):
+                    f.write(iStr.format(titleStr[i], typeStr[i], iouStr[i], areaRng[i], maxDets[i], c) + '\n')
+
         except Exception as e:
             print('ERROR: pycocotools unable to run: %s' % e)
 
