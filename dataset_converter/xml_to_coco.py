@@ -27,17 +27,17 @@ def xml2coco(dir):
     def image_size(dir, name):
         try:
             img_size = Image.open((dir / 'images' / name.name).with_suffix('.JPG')).size
-            filename = name.name.with_suffix('.JPG')
+            filename = f"{name.stem}.JPG"
         except FileNotFoundError:
             img_size = Image.open((dir / 'images' / name.name).with_suffix('.jpg')).size
-            filename = name.name.with_suffix('.jpg')
-        return img_size
+            filename = f"{name.stem}.jpg"
+        return img_size, filename
 
 
     def check_and_extract(root, name, length):
         variables = root.findall(name)
         if len(variables) == 0:
-            raise ValueError("Can not find %s in %s" % (name, root.tag))
+            return None
         if length > 0 and len(variables) != length:
             raise ValueError("The size of %s is supposed to be %d, but is %d." % (name, length, len(variables)))
         if length == 1:
@@ -71,15 +71,14 @@ def xml2coco(dir):
             filename = os.path.splitext(os.path.basename(filename))[0]
             return int(filename), False
         except:
-            print("the image id needs to be integer, we will convert the data now")
+            # print("the image id needs to be integer, we will convert the data now")
             return None
 
-
+    json_dict = {"images": [], "type": "instances", "annotations": [], "categories": []}
     location_to_save = 'labels'
     location_to_read = 'labels_orig'
     (dir / location_to_save).mkdir(parents=True, exist_ok=True)  # make labels directory
     pbar = tqdm((dir / location_to_read).glob('*.xml'), desc=f'Converting {dir}') # looking for *.xml files
-    json_dict = {"images": [], "type": "instances", "annotations": [], "categories": []}
     if PRE_DEFINE_CATEGORIES is not None:
         categories = PRE_DEFINE_CATEGORIES
     else:
@@ -88,7 +87,7 @@ def xml2coco(dir):
 
     i = 0
 
-    for f in pbar:
+    for f in tqdm((dir / location_to_read).glob('*.xml'), desc=f'Converting {dir}'):
         try:
             img_size, filename = image_size(dir, f)
         except FileNotFoundError:
@@ -96,8 +95,14 @@ def xml2coco(dir):
                 missing.writelines(f"Can't find Image under {dir} folder called {f.stem} \n")
         with open(f, 'r') as file:  # read annotation.txt
             myroot = ET.parse(file).getroot()
-            
-            xml_image_id = check_and_extract(myroot, "filename", 1).text # the id needs to be integer so need to convert it
+
+            xml_image = check_and_extract(myroot, "filename", 1) # the id needs to be integer so need to convert it
+            if xml_image == None:
+                with open('no_objects_in_images.txt', 'a') as no_objects:
+                    no_objects.writelines(f"Can't find Image under {dir} folder called {f.stem} \n")
+                continue    # skips the current file
+
+            xml_image_id = xml_image.text
             image_id = get_filename_as_int(xml_image_id)
 
             # this would make a new rearrangement for the id assoicated with the images
@@ -107,9 +112,9 @@ def xml2coco(dir):
 
                 if image_id == 1:
                     with open("new_image_id.txt", "a") as new_image_id_txt:
-                        new_image_id_txt.writelines(f"old image id = new image id")
+                        new_image_id_txt.writelines(f"old image id = new image id for {dir}\n")
                 with open("new_image_id.txt", "a") as new_image_id_txt:
-                    new_image_id_txt.writelines(f"{xml_image_id} = {image_id}")
+                    new_image_id_txt.writelines(f"{xml_image_id} = {image_id}\n")
 
             image = {
                 "file_name": filename,
@@ -120,7 +125,6 @@ def xml2coco(dir):
             json_dict["images"].append(image)
 
             for object in myroot.findall('object'):
-                bbox_xywh = []
                 category = check_and_extract(object, 'name', 1).text # finds the content of name within the object type
                 if category not in categories:
                     new_id = len(categories)
@@ -135,14 +139,14 @@ def xml2coco(dir):
                 # appending the results into a list
                 width = abs(xmax - xmin)
                 height = abs(ymax - ymin)
-                bbox_xywh.append(xmin, ymin, width, height)
-                print(bbox_xywh)
+                bbox_xywh = [xmin, ymin, width, height]
+                # print(bbox_xywh)
 
                 ann = {
                 "area": width * height,
                 "iscrowd": 0,
                 "image_id": image_id,
-                "bbox": [xmin, ymin, width, height],
+                "bbox": bbox_xywh,
                 "category_id": category_id,
                 "id": bnd_id,
                 "ignore": 0,
@@ -151,7 +155,7 @@ def xml2coco(dir):
                 json_dict["annotations"].append(ann)
                 bnd_id = bnd_id + 1
     
-    
+
     for cate, cid in categories.items():
         cat = {"supercategory": "none", "id": cid, "name": cate}
         json_dict["categories"].append(cat)

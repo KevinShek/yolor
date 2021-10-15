@@ -26,7 +26,7 @@ def xml2yolo(dir):
     location_to_read = 'labels_orig'
     (dir / location_to_save).mkdir(parents=True, exist_ok=True)  # make labels directory
     pbar = tqdm((dir / location_to_read).glob('*.xml'), desc=f'Converting {dir}') # looking for *.xml files
-    for f in pbar:
+    for f in tqdm((dir / location_to_read).glob('*.xml'), desc=f'Converting {dir}') :
         try:
             img_size = image_size(dir, f)
         except FileNotFoundError:
