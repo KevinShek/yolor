@@ -49,13 +49,12 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
+        pt, onnx, tflite, pb, saved_model = True, False, False, False, False 
 
     else:  # called directly
         set_logging()
         device = select_device(opt.device, batch_size=batch_size)
         save_txt = opt.save_txt  # save *.txt labels
-        # Half
-        half = device.type != 'cpu'  # half precision only supported on CUDA
 
         # Directories
         save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
@@ -72,8 +71,6 @@ def test(data,
             model = attempt_load(weights, map_location=device)  # load FP32 model
             stride = int(model.stride.max())  # model stride
             names = model.module.names if hasattr(model, 'module') else model.names  # get class names
-            if half:
-                model.half()
             if classify:  # second-stage classifier
                 modelc = load_classifier(name='resnet50', n=2)  # initialize
                 modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
@@ -102,8 +99,11 @@ def test(data,
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
         # if device.type != 'cpu' and torch.cuda.device_count() > 1:
         #     model = nn.DataParallel(model)
-
-
+    if pt:
+        # Half
+        half = device.type != 'cpu'  # half precision only supported on CUDA
+        if half:
+            model.half()
     # Configure
     # model.eval()
     is_coco = data.endswith('coco.yaml')  # is COCO dataset
