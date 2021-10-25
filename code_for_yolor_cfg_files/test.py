@@ -3,22 +3,22 @@ import glob
 import json
 import os
 from pathlib import Path
-from matplotlib.pyplot import pause
 
 import numpy as np
 import torch
-from torch.utils.data import dataset
 import yaml
 from tqdm import tqdm
 
-from models.experimental import attempt_load
-from utils.datasets import create_dataloader, LoadImages
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, check_suffix, check_requirements, \
+from utils.google_utils import attempt_load
+from utils.datasets import create_dataloader
+from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, \
     non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, clip_coords, set_logging, increment_path
 from utils.loss import compute_loss
 from utils.metrics import ap_per_class
 from utils.plots import plot_images, output_to_target
-from utils.torch_utils import select_device, time_synchronized, load_classifier
+from utils.torch_utils import select_device, time_synchronized
+
+from models.models import *
 
 def load_classes(path):
     # Loads *.names file at 'path'
@@ -49,7 +49,6 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-        pt, onnx, tflite, pb, saved_model = True, False, False, False, False 
 
     else:  # called directly
         set_logging()
@@ -61,56 +60,28 @@ def test(data,
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        # model = attempt_load(weights, map_location=device)  # load FP32 model
-        w = weights[0] if isinstance(weights, list) else weights
-        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '']
-        check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
-        stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
-        if pt:
-            model = attempt_load(weights, map_location=device)  # load FP32 model
-            stride = int(model.stride.max())  # model stride
-            names = model.module.names if hasattr(model, 'module') else model.names  # get class names
-            if classify:  # second-stage classifier
-                modelc = load_classifier(name='resnet50', n=2)  # initialize
-                modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
-        elif onnx:
-            # check_requirements(('onnx', 'onnxruntime'))
-            import onnxruntime
+        model = Darknet(opt.cfg).to(device)
 
-            if opt.device == "0":
-                providers = [
-                ('CUDAExecutionProvider', {
-                    'device_id': 0,
-                    'arena_extend_strategy': 'kNextPowerOfTwo',
-                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
-                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                    'do_copy_in_default_stream': True,
-                }),
-                'CPUExecutionProvider',
-                ]
-                session = onnxruntime.InferenceSession(w, providers=providers)
-                print("device 0 is selected")
-            else:
-                session = onnxruntime.InferenceSession(w, None)
-            names = names
-        imgsz = check_img_size(imgsz, s=stride)  # check img_size
+        # load model
+        try:
+            ckpt = torch.load(weights[0], map_location=device)  # load checkpoint
+            ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+            model.load_state_dict(ckpt['model'], strict=False)
+        except:
+            load_darknet_weights(model, weights[0])
+        imgsz = check_img_size(imgsz, s=64)  # check img_size
 
-        # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
-        # if device.type != 'cpu' and torch.cuda.device_count() > 1:
-        #     model = nn.DataParallel(model)
-    if pt:
-        # Half
-        half = device.type != 'cpu'  # half precision only supported on CUDA
-        if half:
-            model.half()
+    # Half
+    half = device.type != 'cpu'  # half precision only supported on CUDA
+    if half:
+        model.half()
+
     # Configure
-    # model.eval()
+    model.eval()
     is_coco = data.endswith('coco.yaml')  # is COCO dataset
-    is_coco_format = data.endswith('coco_format.yaml')  # is COCO dataset
     with open(data) as f:
         data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-    # check_dataset(data)  # check
+    check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
@@ -125,17 +96,13 @@ def test(data,
     # Dataloader
     if not training:
         img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
-        # _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
+        _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
         path = data['test'] if opt.task == 'test' else data['val']  # path to val/test images
-        # dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=True)[0]
-        dataloader, dataset = create_dataloader(path, imgsz, batch_size, stride, opt, pad=0.5, rect=True)
-
-    # Dataset
-    # dataset = LoadImages(path, img_size=imgsz, auto_size=64)
+        dataloader = create_dataloader(path, imgsz, batch_size, 64, opt, pad=0.5, rect=True)[0]
 
     seen = 0
     try:
-        names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+        names = model.names if hasattr(model, 'names') else model.module.names
     except:
         names = load_classes(opt.names)
     coco91class = coco80_to_coco91_class()
@@ -144,32 +111,18 @@ def test(data,
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
-    # img = img.to(device, non_blocking=True)
-    # img = img.half() if half else img.float()  # uint8 to fp16/32
-        if onnx:
-            img = img.numpy()
-            img = img.astype('float32')
-            # img = torch.from_numpy(img).to(device)
-        else:
-            img = img.to(device, non_blocking=True)
-            img = img.half() if half else img.float()  # uint8 to fp16/32
+        img = img.to(device, non_blocking=True)
+        img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
         nb, _, height, width = img.shape  # batch size, channels, height, width
-        # height, width = img.shape  # batch size, channels, height, width
         whwh = torch.Tensor([width, height, width, height]).to(device)
 
         # Disable gradients
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            if pt:
-                inf_out, train_out = model(img, augment=augment)[0:2]
-            elif onnx:
-                inf_out = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
-                if opt.device == "0": 
-                    inf_out = inf_out.to(device)
-            # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
+            inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
             # Compute loss
@@ -208,10 +161,10 @@ def test(data,
             # W&B logging
             if plots and len(wandb_images) < log_imgs:
                 box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                            "class_id": int(cls),
-                            "box_caption": "%s %.3f" % (names[cls], conf),
-                            "scores": {"class_score": conf},
-                            "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
+                             "class_id": int(cls),
+                             "box_caption": "%s %.3f" % (names[cls], conf),
+                             "scores": {"class_score": conf},
+                             "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
                 boxes = {"predictions": {"box_data": box_data, "class_labels": names}}
                 wandb_images.append(wandb.Image(img[si], boxes=boxes, caption=path.name))
 
@@ -228,9 +181,9 @@ def test(data,
                 box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
                 for p, b in zip(pred.tolist(), box.tolist()):
                     jdict.append({'image_id': image_id,
-                                'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
-                                'bbox': [round(x, 3) for x in b],
-                                'score': round(p[4], 5)})
+                                  'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
+                                  'bbox': [round(x, 3) for x in b],
+                                  'score': round(p[4], 5)})
 
             # Assign all predictions as incorrect
             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
@@ -250,6 +203,7 @@ def test(data,
                     if pi.shape[0]:
                         # Prediction to target ious
                         ious, i = box_iou(pred[pi, :4], tbox[ti]).max(1)  # best ious, indices
+
                         # Append detections
                         detected_set = set()
                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
@@ -269,7 +223,7 @@ def test(data,
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
             plot_images(img, targets, paths, f, names)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
-            plot_images(img, output_to_target(output), paths, f, names)  # predictions
+            plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -283,10 +237,7 @@ def test(data,
 
     # W&B logging
     if plots and wandb:
-        wandb.init(resume="allow",
-                project='YOLOR-test',
-                name=save_dir.stem,
-                id= None)
+        wandb.init(project="results") # for windows
         wandb.log({"Images": wandb_images})
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
@@ -309,21 +260,16 @@ def test(data,
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
         with open(save_dir / 'information.txt', 'a') as f:
-            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n\n')
+            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n')
 
     # Save JSON
     if save_json and len(jdict):
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
-        if is_coco:
-            anno_json = glob.glob('../coco/annotations/instances_val*.json')[0]  # annotations json
-        else:
-            anno_json = glob.glob('../heridal/testImages/labels/labels.json')  # annotations json
+        anno_json = glob.glob('../coco/annotations/instances_val*.json')[0]  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         print('\nEvaluating pycocotools mAP... saving %s...' % pred_json)
         with open(pred_json, 'w') as f:
             json.dump(jdict, f)
-
-        print([Path(x).stem for x in dataloader.dataset.img_files])
 
         try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
             from pycocotools.coco import COCO
@@ -334,35 +280,17 @@ def test(data,
             eval = COCOeval(anno, pred, 'bbox')
             if is_coco:
                 eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
-            else:
-                eval.params.imgIds = [Path(x).stem for x in dataloader.dataset.img_files]  # image IDs to evaluate (has to be in int)
             eval.evaluate()
             eval.accumulate()
             eval.summarize()
             map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
-
-            iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3} ] = {:0.3}'
-            titleStr = ["Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", 
-                        "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall"]
-            iouStr = ["0.50:0.95", "0.50", "0.75", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", 
-                        "0.50:0.95", "0.50:0.95"]
-            typeStr = ["(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)"]
-            areaRng = ["all", "all", "all", "small", "medium", "large", "all", "all", "all", "small", "medium", "large"]
-            maxDets = ["100", "100", "100", "100", "100", "100", "1", "100", "100", "100", "100", "100"]
-
-
-            with open(save_dir / 'information.txt', 'a') as f:
-                for i, c in enumerate(eval.stats):
-                    f.write(iStr.format(titleStr[i], typeStr[i], iouStr[i], areaRng[i], maxDets[i], c) + '\n')
-
         except Exception as e:
             print('ERROR: pycocotools unable to run: %s' % e)
 
     # Return results
     if not training:
         print('Results saved to %s' % save_dir)
-    if pt:
-        model.float()  # for training
+    model.float()  # for training
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
@@ -371,9 +299,9 @@ def test(data,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', nargs='+', type=str, default='yolor-p6.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default='yolor_p6.pt', help='model.pt path(s)')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
-    parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=1280, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
@@ -388,6 +316,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/test', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--cfg', type=str, default='cfg/yolor_p6.cfg', help='*.cfg path')
     parser.add_argument('--names', type=str, default='data/coco.names', help='*.cfg path')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
@@ -410,7 +339,7 @@ if __name__ == '__main__':
              )
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
-        for weights in ['yolor-p6.pt', 'yolor-w6.pt', 'yolor-e6.pt', 'yolor-d6.pt']:
+        for weights in ['yolor_p6.pt', 'yolor_w6.pt']:
             f = 'study_%s_%s.txt' % (Path(opt.data).stem, Path(weights).stem)  # filename to save to
             x = list(range(320, 800, 64))  # x axis
             y = []  # y axis

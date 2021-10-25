@@ -59,11 +59,14 @@ def check_git_status():
             print(s[s.find('Your branch is behind'):s.find('\n\n')] + '\n')
 
 
-def check_img_size(img_size, s=32):
-    # Verify img_size is a multiple of stride s
-    new_size = make_divisible(img_size, int(s))  # ceil gs-multiple
-    if new_size != img_size:
-        print('WARNING: --img-size %g must be multiple of max stride %g, updating to %g' % (img_size, s, new_size))
+def check_img_size(imgsz, s=32, floor=0):
+    # Verify image size is a multiple of stride s in each dimension
+    if isinstance(imgsz, int):  # integer i.e. img_size=640
+        new_size = max(make_divisible(imgsz, int(s)), floor)
+    else:  # list i.e. img_size=[640, 480]
+        new_size = [max(make_divisible(x, int(s)), floor) for x in imgsz]
+    if new_size != imgsz:
+        print(f'WARNING: --img-size {imgsz} must be multiple of max stride {s}, updating to {new_size}')
     return new_size
 
 
@@ -440,17 +443,21 @@ def apply_classifier(x, model, img, im0):
     return x
 
 
-def increment_path(path, exist_ok=True, sep=''):
-    # Increment path, i.e. runs/exp --> runs/exp{sep}0, runs/exp{sep}1 etc.
+def increment_path(path, exist_ok=False, sep='', mkdir=False):
+    # Increment file or directory path, i.e. runs/exp --> runs/exp{sep}2, runs/exp{sep}3, ... etc.
     path = Path(path)  # os-agnostic
-    if (path.exists() and exist_ok) or (not path.exists()):
-        return str(path)
-    else:
+    if path.exists() and not exist_ok:
+        suffix = path.suffix
+        path = path.with_suffix('')
         dirs = glob.glob(f"{path}{sep}*")  # similar paths
         matches = [re.search(rf"%s{sep}(\d+)" % path.stem, d) for d in dirs]
         i = [int(m.groups()[0]) for m in matches if m]  # indices
         n = max(i) + 1 if i else 2  # increment number
-        return f"{path}{sep}{n}"  # update path
+        path = Path(f"{path}{sep}{n}{suffix}")  # update path
+    dir = path if path.suffix == '' else path.parent  # directory
+    if not dir.exists() and mkdir:
+        dir.mkdir(parents=True, exist_ok=True)  # make directory
+    return path
 
 
 def check_suffix(file='yolov5s.pt', suffix=('.pt',), msg=''):
@@ -523,6 +530,89 @@ def check_online():
 def emojis(str=''):
     # Return platform-dependent emoji-safe version of string
     return str.encode().decode('ascii', 'ignore') if platform.system() == 'Windows' else str
+
+
+def user_config_dir(dir='Ultralytics', env_var='YOLOV5_CONFIG_DIR'):
+    # Return path of user configuration directory. Prefer environment variable if exists. Make dir if required.
+    env = os.getenv(env_var)
+    if env:
+        path = Path(env)  # use environment variable
+    else:
+        cfg = {'Windows': 'AppData/Roaming', 'Linux': '.config', 'Darwin': 'Library/Application Support'}  # 3 OS dirs
+        path = Path.home() / cfg.get(platform.system(), '')  # OS-specific config dir
+        path = (path if is_writeable(path) else Path('/tmp')) / dir  # GCP and AWS lambda fix, only /tmp is writeable
+    path.mkdir(exist_ok=True)  # make if required
+    return path
+
+
+def is_writeable(dir, test=False):
+    # Return True if directory has write permissions, test opening a file with write permissions if test=True
+    if test:  # method 1
+        file = Path(dir) / 'tmp.txt'
+        try:
+            with open(file, 'w'):  # open file with write permissions
+                pass
+            file.unlink()  # remove file
+            return True
+        except IOError:
+            return False
+    else:  # method 2
+        return os.access(dir, os.R_OK)  # possible issues on Windows
+        
+
+def is_docker():
+    # Is environment a Docker container?
+    return Path('/workspace').exists()  # or Path('/.dockerenv').exists()
+
+
+def is_colab():
+    # Is environment a Google Colab instance?
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return False
+
+
+def check_imshow():
+    # Check if environment supports image displays
+    try:
+        assert not is_docker(), 'cv2.imshow() is disabled in Docker environments'
+        assert not is_colab(), 'cv2.imshow() is disabled in Google Colab environments'
+        cv2.imshow('test', np.zeros((1, 1, 3)))
+        cv2.waitKey(1)
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+        return True
+    except Exception as e:
+        print(f'WARNING: Environment does not support cv2.imshow() or PIL Image.show() image displays\n{e}')
+        return False
+
+
+def is_ascii(s=''):
+    # Is string composed of all ASCII (no UTF) characters? (note str().isascii() introduced in python 3.7)
+    s = str(s)  # convert list, tuple, None, etc. to str
+    return len(s.encode().decode('ascii', 'ignore')) == len(s)
+
+
+def is_chinese(s='人工智能'):
+    # Is string composed of any Chinese characters?
+    return re.search('[\u4e00-\u9fff]', s)
+
+
+def save_one_box(xyxy, im, file='image.jpg', gain=1.02, pad=10, square=False, BGR=False, save=True):
+    # Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop
+    xyxy = torch.tensor(xyxy).view(-1, 4)
+    b = xyxy2xywh(xyxy)  # boxes
+    if square:
+        b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # attempt rectangle to square
+    b[:, 2:] = b[:, 2:] * gain + pad  # box wh * gain + pad
+    xyxy = xywh2xyxy(b).long()
+    clip_coords(xyxy, im.shape)
+    crop = im[int(xyxy[0, 1]):int(xyxy[0, 3]), int(xyxy[0, 0]):int(xyxy[0, 2]), ::(1 if BGR else -1)]
+    if save:
+        cv2.imwrite(str(increment_path(file, mkdir=True).with_suffix('.jpg')), crop)
+    return crop
 
 
 @try_except
