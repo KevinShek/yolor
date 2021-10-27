@@ -369,7 +369,7 @@ def plot_results(start=0, stop=0, bucket='', id=(), labels=(), save_dir=''):
     fig.savefig(Path(save_dir) / 'results.png', dpi=200)
 
 
-def check_font(font='Arial.ttf', size=10):
+def check_font(font='arial.ttf', size=10):
     # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
     font = Path(font)
     font = font if font.exists() else (CONFIG_DIR / font.name)
@@ -402,8 +402,8 @@ class Colors:
 colors = Colors()  # create instance for 'from utils.plots import colors'
 
 class Annotator:
-    if RANK in (-1, 0):
-        check_font()  # download TTF if necessary
+    # if RANK in (-1, 0):
+    #     check_font()  # download TTF if necessary
 
     # YOLOv5 Annotator for train/val mosaics and jpgs and detect/hub inference annotations
     def __init__(self, im, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
