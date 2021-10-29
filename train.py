@@ -6,6 +6,7 @@ import random
 import time
 from pathlib import Path
 from warnings import warn
+from matplotlib.pyplot import pause
 
 import numpy as np
 import torch.distributed as dist
@@ -43,8 +44,8 @@ except ImportError:
 
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(f'Hyperparameters {hyp}')
-    save_dir, epochs, batch_size, total_batch_size, weights, rank = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
+    save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze, resume = \
+        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze, opt.resume
 
     # Directories
     wdir = save_dir / 'weights'
@@ -72,9 +73,22 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     nc, names = (1, ['item']) if opt.single_cls else (int(data_dict['nc']), data_dict['names'])  # number classes, names
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, opt.data)  # check
 
-    # Model
+    # # Model
+    # pretrained = weights.endswith('.pt')
+    # if pretrained:
+    #     with torch_distributed_zero_first(rank):
+    #         attempt_download(weights)  # download if not found locally
+    #     ckpt = torch.load(weights, map_location=device)  # load checkpoint
+    #     model = Darknet(opt.cfg).to(device)  # create
+    #     state_dict = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+    #     model.load_state_dict(state_dict, strict=False)
+    #     print('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
+    # else:
+    #     model = Darknet(opt.cfg).to(device) # create
+    
+    # model
     pretrained = weights.endswith('.pt')
-    if pretrained:
+    if pretrained:  # pytorch format
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -82,9 +96,23 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         state_dict = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
         model.load_state_dict(state_dict, strict=False)
         print('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
+    elif len(weights) > 0:  # darknet format
+        # pretrained = True
+        # Initialize model
+        model = Darknet(opt.cfg).to(device)
+        load_darknet_weights(model, weights)
     else:
-        model = Darknet(opt.cfg).to(device) # create
+        model = Darknet(opt.cfg).to(device)
 
+    # Freeze
+    freeze = [f'module_list.{x}.' for x in range(freeze)]  # parameter names to freeze (full or partial)
+    for k, v in model.named_parameters():
+        print(k)
+        v.requires_grad = True  # train all layers
+        if any(x in k for x in freeze):
+            print('freezing %s' % k)
+            v.requires_grad = False
+            
     # Optimizer
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / total_batch_size), 1)  # accumulate loss before optimizing
@@ -131,6 +159,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     start_epoch, best_fitness = 0, 0.0
     best_fitness_p, best_fitness_r, best_fitness_ap50, best_fitness_ap, best_fitness_f = 0.0, 0.0, 0.0, 0.0, 0.0
     if pretrained:
+        ckpt = torch.load(weights, map_location=device)  # load checkpoint
         # Optimizer
         if ckpt['optimizer'] is not None:
             optimizer.load_state_dict(ckpt['optimizer'])
@@ -262,7 +291,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
@@ -483,6 +511,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/train', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--freeze', type=int, default=0, help='Number of layers to freeze. backbone = check the model and use netron to assist')
     opt = parser.parse_args()
 
     # Set DDP variables

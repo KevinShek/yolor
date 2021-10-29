@@ -1,0 +1,10 @@
+runs
+__pycache__
+*.pt
+*.weights
+*.onnx
+weights
+evolve.png
+evolve.txt
+wandb
+.vscode

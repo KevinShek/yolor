@@ -4,6 +4,14 @@ import json
 import os
 from pathlib import Path
 
+# This call to matplotlib.use() has no effect because the backend has already
+# been chosen; matplotlib.use() must be called *before* pylab, matplotlib.pyplot,
+# or matplotlib.backends is imported for the first time.
+import matplotlib
+matplotlib.use('Agg')  # for writing to files only
+
+nano = True
+
 import numpy as np
 import torch
 import yaml
@@ -228,7 +236,10 @@ def test(data,
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     if len(stats) and stats[0].any():
-        p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
+        if nano:
+            p, r, ap, f1, ap_class = ap_per_class(*stats, plot=False, fname=save_dir / 'precision-recall_curve.png')
+        else:
+            p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
         p, r, ap50, ap = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1)  # [P, R, AP@0.5, AP@0.5:0.95]
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
         nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
@@ -237,6 +248,7 @@ def test(data,
 
     # W&B logging
     if plots and wandb:
+        wandb.init(project="results") # for windows
         wandb.log({"Images": wandb_images})
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
@@ -245,14 +257,21 @@ def test(data,
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
 
     # Print results per class
-    if verbose and nc > 1 and len(stats):
+    if verbose and len(stats):
+        with open(save_dir / 'information.txt', 'a') as f:
+            f.write(('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95') + '\n')
+            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map) + '\n')
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+            with open(save_dir / 'information.txt', 'a') as f:
+                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]) + '\n')
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
+        with open(save_dir / 'information.txt', 'a') as f:
+            f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n')
 
     # Save JSON
     if save_json and len(jdict):
