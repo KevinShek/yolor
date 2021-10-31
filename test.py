@@ -3,6 +3,15 @@ import glob
 import json
 import os
 from pathlib import Path
+
+# This call to matplotlib.use() has no effect because the backend has already
+# been chosen; matplotlib.use() must be called *before* pylab, matplotlib.pyplot,
+# or matplotlib.backends is imported for the first time.
+import matplotlib
+matplotlib.use('Agg')  # for writing to files only
+
+nano = True
+
 from matplotlib.pyplot import pause
 
 import numpy as np
@@ -19,6 +28,8 @@ from utils.loss import compute_loss
 from utils.metrics import ap_per_class
 from utils.plots import plot_images, output_to_target
 from utils.torch_utils import select_device, time_synchronized, load_classifier
+
+from models.models import *
 
 def load_classes(path):
     # Loads *.names file at 'path'
@@ -68,12 +79,25 @@ def test(data,
         pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         if pt:
-            model = attempt_load(weights, map_location=device)  # load FP32 model
-            stride = int(model.stride.max())  # model stride
-            names = model.module.names if hasattr(model, 'module') else model.names  # get class names
-            if classify:  # second-stage classifier
-                modelc = load_classifier(name='resnet50', n=2)  # initialize
-                modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
+            try:
+                model = attempt_load(weights, map_location=device)  # load FP32 model
+                stride = int(model.stride.max())  # model stride
+                names = model.module.names if hasattr(model, 'module') else model.names  # get class names
+                if classify:  # second-stage classifier
+                    modelc = load_classifier(name='resnet50', n=2)  # initialize
+                    modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
+            except:
+                # Load model
+                model = Darknet(opt.cfg).to(device)
+
+                # load weights
+                try:
+                    ckpt = torch.load(w, map_location=device)  # load checkpoint
+                    ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+                    model.load_state_dict(ckpt['model'], strict=False)
+                except:
+                    load_darknet_weights(model, w)
+
         elif onnx:
             # check_requirements(('onnx', 'onnxruntime'))
             import onnxruntime
@@ -274,7 +298,10 @@ def test(data,
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     if len(stats) and stats[0].any():
-        p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
+        if nano:
+            p, r, ap, f1, ap_class = ap_per_class(*stats, plot=False, fname=save_dir / 'precision-recall_curve.png')
+        else:            
+            p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
         p, r, ap50, ap = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1)  # [P, R, AP@0.5, AP@0.5:0.95]
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
         nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
@@ -388,7 +415,8 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/test', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--names', type=str, default='data/coco.names', help='*.cfg path')
+    parser.add_argument('--names', type=str, default='data/coco.names', help='*dataset class names path')
+    parser.add_argument('--cfg', type=str, default='cfg/yolor_p6.cfg', help='*.cfg path')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
