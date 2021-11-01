@@ -42,7 +42,7 @@ def file_size(file):
     return Path(file).stat().st_size / 1e6
 
 
-def export_torchscript(model, img, file, optimize=False):
+def export_torchscript(model, img, file, optimize=True):
     # TorchScript model export
     prefix = colorstr('TorchScript:')
     try:

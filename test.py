@@ -10,7 +10,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # for writing to files only
 
-nano = True
+nano = False
 
 import numpy as np
 import torch
