@@ -162,8 +162,8 @@ if __name__ == '__main__':
     #     ts = torch.jit.trace(model, img)
     #     ts.save(f)
     #     print('TorchScript export success, saved as %s' % f)
-    # except Exception as e:
-    #     print('TorchScript export failure: %s' % e)
+    except Exception as e:
+        print('TorchScript export failure: %s' % e)
 
     # ONNX export
     try:
