@@ -154,8 +154,9 @@ if __name__ == '__main__':
     # model.model[-1].export = True  # set Detect() layer export=True
     y = model(img)  # dry run
 
-    # # TorchScript export
-    # try:
+    # TorchScript export
+    try:
+        export_torchscript(model, img, file)
     #     print('\nStarting TorchScript export with torch %s...' % torch.__version__)
     #     f = opt.weights.replace('.pt', '.torchscript.pt')  # filename
     #     ts = torch.jit.trace(model, img)
