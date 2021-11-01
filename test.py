@@ -78,25 +78,41 @@ def test(data,
         check_suffix(w, suffixes)  # check weights have acceptable suffix
         pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
+        pt_jit = pt and 'torchscript' in w
         if pt:
-            try:
-                model = attempt_load(weights, map_location=device)  # load FP32 model
-                stride = int(model.stride.max())  # model stride
-                names = model.module.names if hasattr(model, 'module') else model.names  # get class names
-                if classify:  # second-stage classifier
-                    modelc = load_classifier(name='resnet50', n=2)  # initialize
-                    modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
-            except:
-                # Load model
-                model = Darknet(opt.cfg).to(device)
-
-                # load weights
+            if pt_jit:
+                import json
+                extra_files = {'config.txt': ''}
+                model = torch.jit.load(w, _extra_files=extra_files)
                 try:
-                    ckpt = torch.load(w, map_location=device)  # load checkpoint
-                    ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
-                    model.load_state_dict(ckpt['model'], strict=False)
+                    d = json.loads(extra_files['config.txt'])  # extra_files dict
+                    ts_h, ts_w = d['HW']
+                    ts_bs = int(d['BATCH'])
+                    stride = int(d['STRIDE'])
+                    ts_params = True  # torchscript predefined params
+                    print("Using saved graph params HW: {}, stride: {}".format((ts_h, ts_w), stride))
                 except:
-                    load_darknet_weights(model, w)
+                    ts_params = False
+                    print("Failed to load default jit graph params from {}".format(w))
+            else:
+                try:
+                    model = attempt_load(weights, map_location=device)  # load FP32 model
+                    stride = int(model.stride.max())  # model stride
+                    names = model.module.names if hasattr(model, 'module') else model.names  # get class names
+                    if classify:  # second-stage classifier
+                        modelc = load_classifier(name='resnet50', n=2)  # initialize
+                        modelc.load_state_dict(torch.load('resnet50.pt', map_location=device)['model']).to(device).eval()
+                except:
+                    # Load model
+                    model = Darknet(opt.cfg).to(device)
+
+                    # load weights
+                    try:
+                        ckpt = torch.load(w, map_location=device)  # load checkpoint
+                        ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+                        model.load_state_dict(ckpt['model'], strict=False)
+                    except:
+                        load_darknet_weights(model, w)
 
         elif onnx:
             # check_requirements(('onnx', 'onnxruntime'))
@@ -188,7 +204,10 @@ def test(data,
             # Run model
             t = time_synchronized()
             if pt:
-                inf_out, train_out = model(img, augment=augment)[0:2]
+                if pt_jit:
+                    inf_out, train_out = model(img)[0:2]
+                else:
+                    inf_out, train_out = model(img, augment=augment)[0:2]
             elif onnx:
                 inf_out = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
                 if opt.device == "0": 
