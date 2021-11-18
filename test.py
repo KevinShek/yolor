@@ -3,6 +3,7 @@ import glob
 import json
 import os
 from pathlib import Path
+import cv2
 
 # This call to matplotlib.use() has no effect because the backend has already
 # been chosen; matplotlib.use() must be called *before* pylab, matplotlib.pyplot,
@@ -10,7 +11,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # for writing to files only
 
-nano = True
+nano = False
 
 from matplotlib.pyplot import pause
 
@@ -21,15 +22,17 @@ import yaml
 from tqdm import tqdm
 
 from models.experimental import attempt_load
-from utils.datasets import create_dataloader, LoadImages
+from utils.datasets import create_dataloader, LoadImages, letterbox
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, check_suffix, check_requirements, \
     non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, clip_coords, set_logging, increment_path
 from utils.loss import compute_loss
 from utils.metrics import ap_per_class
-from utils.plots import plot_images, output_to_target
+from utils.plots import plot_images, output_to_target, plot_one_box
 from utils.torch_utils import select_device, time_synchronized, load_classifier
 
 from models.models import *
+
+from trt_loader.trt_loader import TrtModel
 
 def load_classes(path):
     # Loads *.names file at 'path'
@@ -52,6 +55,7 @@ def test(data,
          dataloader=None,
          save_dir=Path(''),  # for saving images
          save_txt=False,  # for auto-labelling
+         save_image=False, # for saving labelled images
          save_conf=False,
          plots=True,
          log_imgs=0):  # number of logged images
@@ -60,7 +64,7 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-        pt, onnx, tflite, pb, saved_model = True, False, False, False, False 
+        pt, onnx, tflite, pb, saved_model, pt_jit = True, False, False, False, False, False 
 
     else:  # called directly
         set_logging()
@@ -71,12 +75,16 @@ def test(data,
         save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
+        if save_image:
+            save_dir_image = Path(increment_path(Path(opt.project) / opt.name / "images", exist_ok=opt.exist_ok))  # increment run
+            (save_dir_image).mkdir(parents=True, exist_ok=True)  # make dir
+
         # Load model
         # model = attempt_load(weights, map_location=device)  # load FP32 model
         w = weights[0] if isinstance(weights, list) else weights
-        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '']
+        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '']
         check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
+        pt, onnx, tflite, pb, trt, saved_model = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         pt_jit = pt and 'torchscript' in w
         if pt:
@@ -134,6 +142,10 @@ def test(data,
             else:
                 session = onnxruntime.InferenceSession(w, None)
             names = names
+        
+        elif trt:
+            model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
+
         imgsz = check_img_size(imgsz, s=stride)  # check img_size
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
@@ -144,6 +156,7 @@ def test(data,
         half = device.type != 'cpu'  # half precision only supported on CUDA
         if half:
             model.half()
+
     # Configure
     # model.eval()
     is_coco = data.endswith('coco.yaml')  # is COCO dataset
@@ -178,6 +191,7 @@ def test(data,
         names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     except:
         names = load_classes(opt.names)
+    # colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
@@ -190,6 +204,9 @@ def test(data,
             img = img.numpy()
             img = img.astype('float32')
             # img = torch.from_numpy(img).to(device)
+        elif trt:
+            img = img.numpy()
+            img = img.astype('float16')
         else:
             img = img.to(device, non_blocking=True)
             img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -212,6 +229,10 @@ def test(data,
                 inf_out = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
                 if opt.device == "0": 
                     inf_out = inf_out.to(device)
+            elif trt:
+                inf_out = torch.tensor(model.run(img))
+                if opt.device == "0": 
+                    inf_out = inf_out.to(device)
             # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
@@ -222,7 +243,7 @@ def test(data,
             # Run NMS
             t = time_synchronized()
             output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
-            t1 += time_synchronized() - t
+            t1 += time_synchronized() - t  
 
         # Statistics per image
         for si, pred in enumerate(output):
@@ -241,9 +262,13 @@ def test(data,
             if save_txt:
                 gn = torch.tensor(shapes[si][0])[[1, 0, 1, 0]]  # normalization gain whwh
                 x = pred.clone()
+                # print("xyxy =", x[:, :4])
                 x[:, :4] = scale_coords(img[si].shape[1:], x[:, :4], shapes[si][0], shapes[si][1])  # to original
                 for *xyxy, conf, cls in x:
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                    # print("xywh =", xywh)
+                    # print("conf =", conf)
+                    # print("cls =", cls)
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                     with open(save_dir / 'labels' / (path.stem + '.txt'), 'a') as f:
                         f.write(('%g ' * len(line)).rstrip() % line + '\n')
@@ -280,7 +305,6 @@ def test(data,
             if nl:
                 detected = []  # target indices
                 tcls_tensor = labels[:, 0]
-
                 # target boxes
                 tbox = xywh2xyxy(labels[:, 1:5]) * whwh
 
@@ -310,8 +334,16 @@ def test(data,
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
-            plot_images(img, targets, paths, f, names)  # labels
+            plot_images(img, targets, paths, f, names, max_size=imgsz)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
+            plot_images(img, output_to_target(output), paths, f, names, max_size=imgsz)  # predictions
+        
+        if save_image:
+            # o_img = cv2.imread(paths[0])  # BGR
+            # # rgb_img = o_img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB
+            # img0 = o_img.transpose(2, 0, 1)
+            # img0 = img0[None] # makes a batch dim of 1 example (channel, height, width) to (batch dim, channel, height, width)
+            f = save_dir_image / f'test_batch{batch_i}_pred.jpg'
             plot_images(img, output_to_target(output), paths, f, names)  # predictions
 
     # Compute statistics
@@ -429,6 +461,7 @@ if __name__ == '__main__':
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save_img', action='store_true', help='save image to as jpeg')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--project', default='runs/test', help='save to project/name')
@@ -453,6 +486,7 @@ if __name__ == '__main__':
              opt.augment,
              opt.verbose,
              save_txt=opt.save_txt,
+             save_image=opt.save_img,
              save_conf=opt.save_conf,
              )
 

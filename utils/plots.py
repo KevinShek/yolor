@@ -141,7 +141,6 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             classes = image_targets[:, 1].astype('int')
             labels = image_targets.shape[1] == 6  # labels if no conf column
             conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
-
             boxes[[0, 2]] *= w
             boxes[[0, 2]] += block_x
             boxes[[1, 3]] *= h

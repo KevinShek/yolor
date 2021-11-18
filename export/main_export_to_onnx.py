@@ -10,6 +10,8 @@ import torch
 import argparse
 import sys
 import time
+from onnx import shape_inference
+from models.models import Darknet, load_darknet_weights
 
 from mish_cuda import MishCuda
 
@@ -70,30 +72,41 @@ def file_size(file):
     return Path(file).stat().st_size / 1e6
 
 
-def export_torchscript(model, img, file, optimize=False):
-    # TorchScript model export
-    prefix = colorstr('TorchScript:')
+def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:')):
+    # YOLOv5 TorchScript model export
+    import json  # required to save graph props
     try:
         print(f'\n{prefix} starting export with torch {torch.__version__}...')
         f = file.with_suffix('.torchscript.pt')
-        ts = torch.jit.trace(model, img, strict=False)
-        (optimize_for_mobile(ts) if optimize else ts).save(f)
+        
+        h, w = im.shape[-2:]
+        batch_size = im.shape[0]
+        stride = int(max(model.stride))
+        dev_type = next(model.parameters()).device.type
+        dct_params = {"HW": [h, w], "BATCH": batch_size, "STRIDE": stride, "DEVICE": dev_type}
+        str_config = json.dumps(dct_params)
+        extra_files = {'config.txt': str_config}  # torch._C.ExtraFilesMap()
+
+        ts = torch.jit.trace(model, im, strict=False)
+        (optimize_for_mobile(ts) if optimize else ts).save(f, _extra_files=extra_files)
+
         print(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
-        return ts
     except Exception as e:
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, file, opset=13, train=False, dynamic=True, simplify=False):
+def export_onnx(model, img, weights, opset=13, train=False, dynamic=True, simplify=False):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
         import onnx
+        import onnxruntime as ort
+        import onnx_graphsurgeon as gs
 
         print(f'\n{prefix} starting export with onnx {onnx.__version__}...')
-        f = file.with_suffix('.onnx')
-        torch.onnx.export(model, img, f, verbose=False, opset_version=12, input_names=['images'],
-                          output_names=['classes', 'boxes'] if y is None else ['output'])
+        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}-test.onnx')  # filename
+        # torch.onnx.export(model, img, f, verbose=False, opset_version=12, input_names=['images'],
+        #                   output_names=['classes', 'boxes'] if y is None else ['output'])
                           # output_names=['output'])
         # torch.onnx.export(model, img, f, verbose=False, opset_version=opset,
         #                   training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
@@ -104,29 +117,59 @@ def export_onnx(model, img, file, opset=13, train=False, dynamic=True, simplify=
         #                                 'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
         #                                 } if dynamic else None)
 
-        # Checks
-        model_onnx = onnx.load(f)  # load onnx model
-        onnx.checker.check_model(model_onnx)  # check onnx model
+            # Export the model
+        torch.onnx.export(model,               # model being run
+                      img,                         # model input (or a tuple for multiple inputs)
+                      f,   # where to save the model (can be a file or file-like object)
+                      export_params=True,        # store the trained parameter weights inside the model file
+                      opset_version=11,          # the ONNX version to export the model to
+                      do_constant_folding=True,  # whether to execute constant folding for optimization
+                      input_names = ['input'],   # the model's input names
+                      output_names = ['output'], # the model's output names
+                      dynamic_axes={'input' : {0 : 'batch_size', 2: 'height', 3:'width'},    # variable length axes
+                                    'output' : {0 : 'batch_size', 1: 'n_boxes'}})
+
+        # # Checks
+        # model_onnx = onnx.load(f)  # load onnx model
+        # onnx.checker.check_model(model_onnx)  # check onnx model
         # print(onnx.helper.printable_graph(model_onnx.graph))  # print
+
+        print('Remove unused outputs')
+        onnx_module = shape_inference.infer_shapes(onnx.load(f))
+        while len(onnx_module.graph.output) != 1:
+            for output in onnx_module.graph.output:
+                if output.name != 'output':
+                    print('--> remove', output.name)
+                    onnx_module.graph.output.remove(output)
+        graph = gs.import_onnx(onnx_module)
+        graph.cleanup()
+        graph.toposort()
+        graph.fold_constants().cleanup()
+        onnx.save_model(gs.export_onnx(graph), f)
+        print('Convert successfull !')
 
         # Simplify
         if simplify:
             try:
-                import onnxsim
+                from onnxsim import simplify
 
-                print(
-                    f'{prefix} simplifying with onnx-simplifier {onnxsim.__version__}...')
-                model_onnx, check = onnxsim.simplify(
-                    model_onnx,
-                    dynamic_input_shape=dynamic,
-                    input_shapes={'images': list(img.shape)} if dynamic else None)
-                assert check, 'assert check failed'
-                onnx.save(model_onnx, f)
+                onnx_model, check = simplify(model_onnx, check_n=3)
+
+                assert check, 'assert simplify check failed'
+                onnx.save(onnx_model, f)
             except Exception as e:
                 print(f'{prefix} simplifier failure: {e}')
+
+            session = ort.InferenceSession(f)
+
+            for ii in session.get_inputs():
+                print("input: ", ii)
+
+            for oo in session.get_outputs():
+                print("output: ", oo)
+
         print(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
-        print(
-            f"{prefix} run --dynamic ONNX model inference with: 'python detect.py --weights {f}'")
+        print(f"{prefix} run --dynamic ONNX model inference with: 'python detect.py --weights {f}'")
         return f
     except Exception as e:
         print(f'{prefix} export failure: {e}')
@@ -143,6 +186,7 @@ if __name__ == '__main__':
                         help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--include', nargs='+', default=['torchscript', 'onnx'],
                         help='available formats are (torchscript, onnx, tflite)')
+    parser.add_argument('--cfg', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--optimize', action='store_true', help='TorchScript: optimize for mobile')                    
     opt = parser.parse_args()
     opt.img_size *= 2 if len(opt.img_size) == 1 else 1  # expand
@@ -155,25 +199,45 @@ if __name__ == '__main__':
     t = time.time()
     include = [x.lower() for x in opt.include]
 
-    # Load PyTorch model
-    model = attempt_load(opt.weights, map_location=torch.device(device))  # load FP32 model
-    labels = model.names
-    model.eval()
-    model = model.to(device)
+    ## Load PyTorch model
+    try:
+        model = attempt_load(opt.weights, map_location=torch.device(device))  # load FP32 model
+        labels = model.names
+        model.eval()
+        model = model.to(device)
+        print("pytorch model loaded")
+    except:    
+        #attempt_download(opt.weights)
 
+        # # Load model
+        model = Darknet(opt.cfg).to(device)
+        # load_darknet_weights(model, opt.weights)
+        # # model.model[-1].export = True  # set Detect() layer export=True
+        # # y = model(img)  # dry run
+
+        # load model for weights format
+        try:
+            ckpt = torch.load(opt.weights, map_location=device)  # load checkpoint
+            ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+            model.load_state_dict(ckpt['model'], strict=False)
+            print("pytorch checkpoint model loaded")
+        except:
+            load_darknet_weights(model, opt.weights)
+            print("weights model loaded")
+        model.eval()
     # convert sync batchnorm
-    model = convert_sync_batchnorm_to_batchnorm(model)
+    # model = convert_sync_batchnorm_to_batchnorm(model)
 
     # Checks
-    gs = int(max(model.stride))  # grid size (max stride)
+    # gs = int(max(model.stride))  # grid size (max stride)
     # verify img_size are gs-multiples
-    opt.img_size = [check_img_size(x, gs) for x in opt.img_size]
+    # opt.img_size = [check_img_size(x, gs) for x in opt.img_size]
 
     # Input
     # image size(1,3,320,192) iDetection
-    img = torch.zeros(opt.batch_size, 3, *opt.img_size)
-    if torch.cuda.is_available() and not device == "cpu":
-        img = img.to(device)
+    img = torch.zeros((opt.batch_size, 3, *opt.img_size), device=device)
+    # if torch.cuda.is_available() and not device == "cpu":
+    #     img = img.to(device)
 
     # Update model
     for k, m in model.named_modules():
@@ -192,16 +256,19 @@ if __name__ == '__main__':
                 m.bn = bn
             if isinstance(m.act, MishCuda):
                 m.act = Mish()  # assign activation
-        # if isinstance(m, models.yolo.Detect):
-        #     m.forward = m.forward_export  # assign forward (optional)
-    model.model[-1].export = True  # set Detect() layer export=True
+    #     # if isinstance(m, models.yolo.Detect):
+    #     #     m.forward = m.forward_export  # assign forward (optional)
+
+    # comment out the model.model[-1].export = True to export the yolov4 csp to being a onnx file
+
+    # model.model[-1].export = True  # set Detect() layer export=True
     y = model(img)  # dry run
 
     # Exporting
     if 'torchscript' in include:
         export_torchscript(model, img, file, opt.optimize)
     if 'onnx' in include:
-        f = export_onnx(model, img, file)
+        f = export_onnx(model, img, opt.weights)
     # TensorFlow Exports
     if 'tflite' in include:
         if f is None:
