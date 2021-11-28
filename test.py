@@ -64,7 +64,7 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-        pt, onnx, tflite, pb, saved_model, pt_jit = True, False, False, False, False, False 
+        pt, onnx, tflite, pb, saved_model, pt_jit, trt = True, False, False, False, False, False, False 
 
     else:  # called directly
         set_logging()
