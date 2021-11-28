@@ -64,7 +64,7 @@ def test(data,
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-        pt, onnx, tflite, pb, saved_model, pt_jit, trt = True, False, False, False, False, False, False 
+        pt, onnx, tflite, pb, saved_model, pt_jit, trt, khadas = True, False, False, False, False, False, False, False 
 
     else:  # called directly
         set_logging()
@@ -82,9 +82,9 @@ def test(data,
         # Load model
         # model = attempt_load(weights, map_location=device)  # load FP32 model
         w = weights[0] if isinstance(weights, list) else weights
-        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '']
+        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '']
         check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, onnx, tflite, pb, trt, saved_model = (suffix == x for x in suffixes)  # backend booleans
+        pt, onnx, tflite, pb, trt, saved_model, khadas = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         pt_jit = pt and 'torchscript' in w
         if pt:
@@ -145,6 +145,15 @@ def test(data,
         
         elif trt:
             model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
+
+        elif khadas:
+            from ksnn.api import KSNN
+            level = 0
+            yolo = KSNN('VIM3')
+            print(' |---+ KSNN Version: {} +---| '.format(yolo.get_nn_version()))
+            print('Start init neural network ...')
+            yolo.nn_init(library=opt.library, model=model, level=level)
+            print('Done.')
 
         imgsz = check_img_size(imgsz, s=stride)  # check img_size
 
@@ -207,6 +216,9 @@ def test(data,
         elif trt:
             img = img.numpy()
             img = img.astype('float16')
+        elif khadas:
+            img = img.numpy()
+            img = img.astype('float32')
         else:
             img = img.to(device, non_blocking=True)
             img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -233,6 +245,9 @@ def test(data,
                 inf_out = torch.tensor(model.run(img))
                 if opt.device == "0": 
                     inf_out = inf_out.to(device)
+            elif khadas:
+                from ksnn.types import output_format
+                inf_out = yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)
             # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
@@ -469,6 +484,7 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--names', type=str, default='data/coco.names', help='*dataset class names path')
     parser.add_argument('--cfg', type=str, default='cfg/yolor_p6.cfg', help='*.cfg path')
+    parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
