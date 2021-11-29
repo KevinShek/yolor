@@ -32,8 +32,6 @@ from utils.torch_utils import select_device, time_synchronized, load_classifier
 
 from models.models import *
 
-from trt_loader.trt_loader import TrtModel
-
 def load_classes(path):
     # Loads *.names file at 'path'
     with open(path, 'r') as f:
@@ -144,6 +142,7 @@ def test(data,
             names = names
         
         elif trt:
+            from trt_loader.trt_loader import TrtModel
             model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
 
         elif khadas:
