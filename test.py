@@ -82,7 +82,7 @@ def test(data,
         w = weights[0] if isinstance(weights, list) else weights
         classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '']
         check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, onnx, tflite, pb, trt, saved_model, khadas = (suffix == x for x in suffixes)  # backend booleans
+        pt, onnx, tflite, pb, trt, khadas, saved_model  = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         pt_jit = pt and 'torchscript' in w
         if pt:
@@ -151,7 +151,7 @@ def test(data,
             yolo = KSNN('VIM3')
             print(' |---+ KSNN Version: {} +---| '.format(yolo.get_nn_version()))
             print('Start init neural network ...')
-            yolo.nn_init(library=opt.library, model=model, level=level)
+            yolo.nn_init(library=opt.library, model=w, level=level)
             print('Done.')
 
         imgsz = check_img_size(imgsz, s=stride)  # check img_size
