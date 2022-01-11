@@ -32,6 +32,8 @@ from utils.torch_utils import select_device, time_synchronized, load_classifier
 
 from models.models import *
 
+from khadas_post_process.yolov4_process import yolov4_post_process
+
 def load_classes(path):
     # Loads *.names file at 'path'
     with open(path, 'r') as f:
@@ -246,7 +248,9 @@ def test(data,
                     inf_out = inf_out.to(device)
             elif khadas:
                 from ksnn.types import output_format
-                inf_out = yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)
+                inf_out = np.array([yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
+            print(len(inf_out[0]))
+            print(inf_out[0].shape[1])
             # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
@@ -256,7 +260,10 @@ def test(data,
 
             # Run NMS
             t = time_synchronized()
-            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
+            if khadas:
+                output = yolov4_post_process(inf_out, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres)
+            else:
+                output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
             t1 += time_synchronized() - t  
 
         # Statistics per image
