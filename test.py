@@ -58,7 +58,8 @@ def test(data,
          save_image=False, # for saving labelled images
          save_conf=False,
          plots=True,
-         log_imgs=0):  # number of logged images
+         log_imgs=0, # number of logged images
+         library=None):  
 
     # Initialize/load model and set device
     training = model is not None
@@ -155,7 +156,7 @@ def test(data,
             yolo = KSNN('VIM3')
             print(' |---+ KSNN Version: {} +---| '.format(yolo.get_nn_version()))
             print('Start init neural network ...')
-            yolo.nn_init(library=opt.library, model=w, level=level)
+            yolo.nn_init(library=library, model=w, level=level)
             print('Done.')
 
         imgsz = check_img_size(imgsz, s=stride)  # check img_size
@@ -512,6 +513,7 @@ if __name__ == '__main__':
              save_txt=opt.save_txt,
              save_image=opt.save_img,
              save_conf=opt.save_conf,
+             library=opt.library,
              )
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
