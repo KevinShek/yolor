@@ -68,7 +68,6 @@ def test(data,
 
     else:  # called directly
         set_logging()
-        device = select_device(opt.device, batch_size=batch_size)
         save_txt = opt.save_txt  # save *.txt labels
 
         # Directories
@@ -87,6 +86,9 @@ def test(data,
         pt, onnx, tflite, pb, trt, khadas, saved_model  = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         pt_jit = pt and 'torchscript' in w
+        if khadas:
+            opt.device = "cpu"
+        device = select_device(opt.device, batch_size=batch_size)
         if pt:
             if pt_jit:
                 import json
