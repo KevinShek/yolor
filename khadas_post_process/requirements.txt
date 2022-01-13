@@ -1,4 +1,4 @@
-# pip install -qr requirements.txt
+# pip install -r requirements.txt
 
 # base ----------------------------------------
 cython
@@ -8,7 +8,7 @@ opencv-python>=4.1.2
 Pillow
 PyYAML>=5.3.1
 scipy>=1.4.1
-tensorboard>=1.5
+# tensorboard>=1.5
 torch>=1.7.0
 # torchvision>=0.8.1
 # to pip install pytorch:
@@ -16,7 +16,7 @@ torch>=1.7.0
 tqdm>=4.41.0
 
 # logging -------------------------------------
-wandb
+# wandb
 
 # plotting ------------------------------------
 seaborn>=0.11.0

@@ -56,15 +56,32 @@ def organising_pre_data(data):
 
 
 def organising_post_data(boxes, classes, scores, NMS_THRESH):
-    output = [torch.zeros(0, 6)] * len(boxes)
-    for x in range(len(boxes)):
+    nc = 0
+    for x in classes:
+        if x == 0:
+            previous_x = x
+            nc = 1
+        elif x != previous_x:
+            nc += 1
+        else: 
+            continue
+
+    output = [torch.zeros(0, 6)] * nc
+
+    for x in range(nc):
         c = classes[x] * 4096  # classes
-        boxes, scores = boxes[x] + c, scores[x]  # boxes (offset by class), scores
+        # print("boxes=",boxes)
+        boxes, scores = boxes + c, scores  # boxes (offset by class), scores
+        # print("boxes=",boxes)
         i = torch.ops.torchvision.nms(boxes, scores, NMS_THRESH)
-        if i.shape[0] > max_det:  # limit detections
-            i = i[:max_det]
+        print(i)
+        if i.shape[0] > MAX_BOXES:  # limit detections
+            i = i[:MAX_BOXES]
 
         output[x] = i
+
+    # print(type(output))
+    # print(len(output))
 
     return output
 
@@ -166,6 +183,14 @@ def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6):
     classes = np.concatenate(classes)
     scores = np.concatenate(scores)
 
+    # boxes = torch.from_numpy(boxes)
+    # classes = torch.from_numpy(classes.astype(np.float64))
+    # scores = torch.from_numpy(scores.astype(np.float64))
+
+    # output = organising_post_data(boxes, classes, scores, NMS_THRESH)
+
+    time_limit = 10.0  # seconds to quit after
+    t = time.time()
     nboxes, nclasses, nscores = [], [], []
     for c in set(classes):
         inds = np.where(classes == c)
@@ -180,13 +205,59 @@ def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6):
         nscores.append(s[keep])
 
     if not nclasses and not nscores:
-        return None, None, None
-
+        # return None, None, None
+        output = [torch.zeros(0, 6)] * 1 
+        return output
     boxes = np.concatenate(nboxes)
     classes = np.concatenate(nclasses)
     scores = np.concatenate(nscores)
 
-    output = organising_post_data(boxes, classes, scores, NMS_THRESH)
+    # print("b=",boxes.dtype, " shape=", boxes.shape)
+    # print("c=",classes.dtype, " shape=", classes.shape)
+    # print("s=",scores.dtype, " shape=", scores.shape)
+
+    boxes = torch.from_numpy(boxes)
+    classes = torch.from_numpy(classes.astype(np.float32))
+    scores = torch.from_numpy(scores.astype(np.float32))
+
+    nc = 0
+    for x in classes:
+        if x == 0:
+            previous_x = x
+            nc = 1
+        elif x != previous_x:
+            nc += 1
+        else: 
+            continue
+
+    output = [torch.zeros(0, 6)] * nc 
+    temp_list = []
+    for xi in range(len(boxes)):
+        temp_array = [boxes[xi][0], boxes[xi][1], boxes[xi][0] + boxes[xi][2], boxes[xi][1] + boxes[xi][3], scores[xi], classes[xi]] # x1, y1, x2, y2, conf, cls
+        # temp_array = [boxes[x], scores[x], classes[x]]
+        if xi >= MAX_BOXES:  # limit detections
+            break
+
+        temp_list.append(temp_array)
+        
+        if (time.time() - t) > time_limit:
+            break  # time limit exceeded
+
+    output[nc-1] = torch.Tensor(temp_list)
+
+    # output = torch.Tensor(output)    # 300 prediction, 6 values == (300,6) or (N, 6) where N is the number of prediction
+    # print(len(output))
+    # print(output.size())
+    # print(output[:, 0])
+    # img_shape = (640,640)
+    # print(output[:, 0].clamp_(0, img_shape[1]))  # x1
+    # print(output[:, 1].clamp_(0, img_shape[0]))  # y1
+    # print(output[:, 2].clamp_(0, img_shape[1]))  # x2
+    # print(output[:, 3].clamp_(0, img_shape[0]))  # y2
+
+    # print("b=",boxes.dtype, " shape=", boxes.size())
+    # print("c=",classes.dtype, " shape=", classes.size())
+    # print("s=",scores.dtype, " shape=", scores.size())
 
     return output
 
