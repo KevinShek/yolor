@@ -95,7 +95,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, weights, opset=13, train=False, dynamic=True, simplify=False):
+def export_onnx(model, img, weights, opset=12, train=False, dynamic=True, simplify=False):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
@@ -122,7 +122,7 @@ def export_onnx(model, img, weights, opset=13, train=False, dynamic=True, simpli
                       img,                         # model input (or a tuple for multiple inputs)
                       f,   # where to save the model (can be a file or file-like object)
                       export_params=True,        # store the trained parameter weights inside the model file
-                      opset_version=11,          # the ONNX version to export the model to
+                      opset_version=opset,          # the ONNX version to export the model to
                       do_constant_folding=True,  # whether to execute constant folding for optimization
                       input_names = ['input'],   # the model's input names
                       output_names = ['output'], # the model's output names
@@ -186,7 +186,7 @@ if __name__ == '__main__':
                         help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--include', nargs='+', default=['torchscript', 'onnx'],
                         help='available formats are (torchscript, onnx, tflite)')
-    parser.add_argument('--cfg', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--cfg', default='', help='')
     parser.add_argument('--optimize', action='store_true', help='TorchScript: optimize for mobile')                    
     opt = parser.parse_args()
     opt.img_size *= 2 if len(opt.img_size) == 1 else 1  # expand
@@ -199,70 +199,75 @@ if __name__ == '__main__':
     t = time.time()
     include = [x.lower() for x in opt.include]
 
-    ## Load PyTorch model
-    try:
-        model = attempt_load(opt.weights, map_location=torch.device(device))  # load FP32 model
-        labels = model.names
-        model.eval()
-        model = model.to(device)
-        print("pytorch model loaded")
-    except:    
-        #attempt_download(opt.weights)
-
-        # # Load model
-        model = Darknet(opt.cfg).to(device)
-        # load_darknet_weights(model, opt.weights)
-        # # model.model[-1].export = True  # set Detect() layer export=True
-        # # y = model(img)  # dry run
-
-        # load model for weights format
+    if file.suffix == ".pt" or file.suffix == ".weights":
+        ## Load PyTorch model
         try:
-            ckpt = torch.load(opt.weights, map_location=device)  # load checkpoint
-            ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
-            model.load_state_dict(ckpt['model'], strict=False)
-            print("pytorch checkpoint model loaded")
-        except:
-            load_darknet_weights(model, opt.weights)
-            print("weights model loaded")
-        model.eval()
-    # convert sync batchnorm
-    # model = convert_sync_batchnorm_to_batchnorm(model)
+            model = attempt_load(opt.weights, map_location=torch.device(device))  # load FP32 model
+            labels = model.names
+            model.eval()
+            model = model.to(device)
+            print("pytorch model loaded")
+        except:    
+            #attempt_download(opt.weights)
 
-    # Checks
-    # gs = int(max(model.stride))  # grid size (max stride)
-    # verify img_size are gs-multiples
-    # opt.img_size = [check_img_size(x, gs) for x in opt.img_size]
+            # # Load model
+            model = Darknet(opt.cfg).to(device)
+            # load_darknet_weights(model, opt.weights)
+            # # model.model[-1].export = True  # set Detect() layer export=True
+            # # y = model(img)  # dry run
 
-    # Input
-    # image size(1,3,320,192) iDetection
-    img = torch.zeros((opt.batch_size, 3, *opt.img_size), device=device)
-    # if torch.cuda.is_available() and not device == "cpu":
-    #     img = img.to(device)
+            # load model for weights format
+            try:
+                ckpt = torch.load(opt.weights, map_location=device)  # load checkpoint
+                ckpt['model'] = {k: v for k, v in ckpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+                model.load_state_dict(ckpt['model'], strict=False)
+                print("pytorch checkpoint model loaded")
+            except:
+                load_darknet_weights(model, opt.weights)
+                print("weights model loaded")
+            model.eval()
+        # convert sync batchnorm
+        # model = convert_sync_batchnorm_to_batchnorm(model)
 
-    # Update model
-    for k, m in model.named_modules():
-        m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
-        if isinstance(m, models.common.Conv) and isinstance(m.act, MishCuda):
-            m.act = Mish()  # assign activation
-        if isinstance(m, models.common.Conv) and isinstance(m.act, nn.Hardswish):
-            m.act = Hardswish()  # assign activation
-        if isinstance(m, models.common.BottleneckCSP) or isinstance(m, models.common.BottleneckCSP2) \
-                or isinstance(m, models.common.SPPCSP):
-            if isinstance(m.bn, nn.SyncBatchNorm):
-                bn = nn.BatchNorm2d(m.bn.num_features, eps=m.bn.eps, momentum=m.bn.momentum)
-                bn.training = False
-                bn._buffers = m.bn._buffers
-                bn._non_persistent_buffers_set = set()
-                m.bn = bn
-            if isinstance(m.act, MishCuda):
+        # Checks
+        # gs = int(max(model.stride))  # grid size (max stride)
+        # verify img_size are gs-multiples
+        # opt.img_size = [check_img_size(x, gs) for x in opt.img_size]
+
+        # Input
+        # image size(1,3,320,192) iDetection
+        img = torch.zeros((opt.batch_size, 3, *opt.img_size), device=device)
+        # if torch.cuda.is_available() and not device == "cpu":
+        #     img = img.to(device)
+
+        # Update model
+        for k, m in model.named_modules():
+            m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
+            if isinstance(m, models.common.Conv) and isinstance(m.act, MishCuda):
                 m.act = Mish()  # assign activation
-    #     # if isinstance(m, models.yolo.Detect):
-    #     #     m.forward = m.forward_export  # assign forward (optional)
+            if isinstance(m, models.common.Conv) and isinstance(m.act, nn.Hardswish):
+                m.act = Hardswish()  # assign activation
+            if isinstance(m, models.common.BottleneckCSP) or isinstance(m, models.common.BottleneckCSP2) \
+                    or isinstance(m, models.common.SPPCSP):
+                if isinstance(m.bn, nn.SyncBatchNorm):
+                    bn = nn.BatchNorm2d(m.bn.num_features, eps=m.bn.eps, momentum=m.bn.momentum)
+                    bn.training = False
+                    bn._buffers = m.bn._buffers
+                    bn._non_persistent_buffers_set = set()
+                    m.bn = bn
+                if isinstance(m.act, MishCuda):
+                    m.act = Mish()  # assign activation
+        #     # if isinstance(m, models.yolo.Detect):
+        #     #     m.forward = m.forward_export  # assign forward (optional)
 
-    # comment out the model.model[-1].export = True to export the yolov4 csp to being a onnx file
+        # comment out the model.model[-1].export = True to export the yolov4 csp to being a onnx file
 
-    # model.model[-1].export = True  # set Detect() layer export=True
-    y = model(img)  # dry run
+        # model.model[-1].export = True  # set Detect() layer export=True
+        y = model(img)  # dry run
+
+        f = None
+    elif file.suffix == ".onnx":
+        f = str(file)
 
     # Exporting
     if 'torchscript' in include:
@@ -277,9 +282,70 @@ if __name__ == '__main__':
         import onnx
         from onnx_tf.backend import prepare
 
-        onnx_model = onnx.load(f)
+
+        onnx_path = "/projects" + f.strip("..")
+        tensorflow_location = "/projects/weights/tensorflow/"+ file.stem +"/"
+        tflite_model_path = "/projects/weights/tensorflow/" + file.stem +".tflite"
+
+        # # print(onnx_path)
+
+        onnx_model = onnx.load(onnx_path)
         tf_rep = prepare(onnx_model)
-        tf_rep.export_graph("weights/") # exporting tensorflow model
+        tf_rep.export_graph(tensorflow_location) # exporting tensorflow model
+
+        import tensorflow as tf
+
+        # Convert the model
+        converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir=tensorflow_location)
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_types = [tf.compat.v1.lite.constants.FLOAT16]
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+        converter.allow_custom_ops = True
+        # # converter.experimental_new_converter = True
+        # converter.target_spec.supported_ops = [
+        # tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+        # tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+        # ]
+
+        tflite_model = converter.convert()
+
+        # Save the model
+        with open(tflite_model_path, 'wb') as f:
+            f.write(tflite_model)
+
+        import tflite_runtime.interpreter as tflite
+
+        # Load the TFLite model and allocate tensors
+        interpreter = tflite.Interpreter(model_path=tflite_model_path)
+        interpreter.allocate_tensors()
+
+        # Get input and output tensors
+        input_details = interpreter.get_input_details()
+        interpreter.resize_tensor_input(input_details[0]['index'], (1, 3, opt.img_size[0], opt.img_size[1]))
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        # input and output shape 
+        print(input_details)
+        print("input=",input_details[0]['shape'])
+        print("output=",output_details[0]['shape'])
+
+        import numpy as np
+
+
+        # Test model on random input data
+        interpreter.allocate_tensors()
+        input_shape = input_details[0]['shape']
+        input_data = np.array(np.random.random_sample(input_shape), dtype=np.float32)
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+
+        interpreter.invoke()
+
+        # Use `tensor()` in order to get a pointer to the tensor.
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        print(output_data)
+
+
 
 
 

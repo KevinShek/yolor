@@ -29,6 +29,7 @@ onnx-simplifier>=0.3.6  # ONNX simplifier
 onnxruntime-gpu
 tensorflow>=2.4.1  # TFLite export
 tensorflowjs>=3.9.0  # TF.js export
+tflite-runtime
 
 # scikit-learn==0.19.2  # for coreml quantization
 

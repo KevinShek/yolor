@@ -22,12 +22,12 @@ import yaml
 from tqdm import tqdm
 
 from models.experimental import attempt_load
-from utils.datasets import create_dataloader, LoadImages, letterbox
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, check_suffix, check_requirements, \
+from utils.datasets import create_dataloader, LoadImages
+from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, box_iou, check_suffix, \
     non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, clip_coords, set_logging, increment_path
 from utils.loss import compute_loss
 from utils.metrics import ap_per_class
-from utils.plots import plot_images, output_to_target, plot_one_box
+from utils.plots import plot_images, output_to_target
 from utils.torch_utils import select_device, time_synchronized, load_classifier
 
 from models.models import *
@@ -37,7 +37,6 @@ def load_classes(path):
     with open(path, 'r') as f:
         names = f.read().split('\n')
     return list(filter(None, names))  # filter removes empty strings (such as last line)
-
 
 def test(data,
          weights=None,
@@ -80,15 +79,16 @@ def test(data,
         # Load model
         # model = attempt_load(weights, map_location=device)  # load FP32 model
         w = weights[0] if isinstance(weights, list) else weights
-        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '']
+        classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '', '.weights']
         check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, onnx, tflite, pb, trt, khadas, saved_model  = (suffix == x for x in suffixes)  # backend booleans
+        pt, onnx, tflite, pb, trt, khadas, saved_model, darknet  = (suffix == x for x in suffixes)  # backend booleans
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         pt_jit = pt and 'torchscript' in w
+        auto = False
         if khadas:
             opt.device = "cpu"
         device = select_device(opt.device, batch_size=batch_size)
-        if pt:
+        if pt or darknet:
             if pt_jit:
                 import json
                 extra_files = {'config.txt': ''}
@@ -156,17 +156,59 @@ def test(data,
             print('Start init neural network ...')
             yolo.nn_init(library=library, model=w, level=level)
             print('Done.')
+        
+        else: # Tensorflow
+            if opt.device == "0":
+                import tensorflow as tf
+                physical_devices = tf.config.list_physical_devices('GPU')
+                tf.config.experimental.set_memory_growth(physical_devices[0], True)
+                # tf.config.experimental.set_virtual_device_configuration(physical_devices[0], [
+                #     tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)]) # this will limit your GPU's memory allowance
+            if saved_model:  # SavedModel
+                auto = False
+                print(f'Loading {w} for TensorFlow SavedModel inference...')
+                import tensorflow as tf
+                model = tf.keras.models.load_model(w)
+                # model = tf.saved_model.load(w)
+                # inference = model.signatures["serving_default"]
+                # print(inference)
+            elif pb:  # GraphDef https://www.tensorflow.org/guide/migrate#a_graphpb_or_graphpbtxt
+                print(f'Loading {w} for TensorFlow GraphDef inference...')
+                import tensorflow as tf
+
+                def wrap_frozen_graph(gd, inputs, outputs):
+                    x = tf.compat.v1.wrap_function(lambda: tf.compat.v1.import_graph_def(gd, name=""), [])  # wrapped
+                    return x.prune(tf.nest.map_structure(x.graph.as_graph_element, inputs),
+                                   tf.nest.map_structure(x.graph.as_graph_element, outputs))
+
+                graph_def = tf.Graph().as_graph_def()
+                graph_def.ParseFromString(open(w, 'rb').read())
+                frozen_func = wrap_frozen_graph(gd=graph_def, inputs="x:0", outputs="Identity:0")
+            elif tflite:
+                try:
+                    import tflite_runtime.interpreter as tfl  # prefer tflite_runtime if installed
+                except ImportError:
+                    import tensorflow.lite as tfl
+
+                w = "/projects" + w.strip("..")
+                print(f'Loading {w} for TensorFlow Lite inference...')
+                interpreter = tfl.Interpreter(model_path=w)  # load TFLite model
+                interpreter.allocate_tensors()  # allocate
+                input_details = interpreter.get_input_details()  # inputs
+                output_details = interpreter.get_output_details()  # outputs
 
         imgsz = check_img_size(imgsz, s=stride)  # check img_size
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
         # if device.type != 'cpu' and torch.cuda.device_count() > 1:
         #     model = nn.DataParallel(model)
-    if pt:
+    if pt or darknet:
         # Half
         half = device.type != 'cpu'  # half precision only supported on CUDA
         if half:
             model.half()
+    else:
+        half = False
 
     # Configure
     # model.eval()
@@ -192,7 +234,7 @@ def test(data,
         # _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
         path = data['test'] if opt.task == 'test' else data['val']  # path to val/test images
         # dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=True)[0]
-        dataloader, dataset = create_dataloader(path, imgsz, batch_size, stride, opt, pad=0.5, rect=True)
+        dataloader, dataset = create_dataloader(path, imgsz, batch_size, stride, opt, pad=0.5, rect=True, auto=auto)
 
     # Dataset
     # dataset = LoadImages(path, img_size=imgsz, auto_size=64)
@@ -220,7 +262,10 @@ def test(data,
             img = img.astype('float16')
         elif khadas:
             img = img.numpy()
-            img = img.astype('float32')
+            img = img.astype('float32')  
+        elif saved_model:
+            img = img.numpy()
+            img = img.astype('float32') # it is expecting a float 32 argument
         else:
             img = img.to(device, non_blocking=True)
             img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -234,7 +279,7 @@ def test(data,
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            if pt:
+            if pt or darknet:
                 if pt_jit:
                     inf_out, train_out = model(img)[0:2]
                 else:
@@ -249,9 +294,29 @@ def test(data,
                     inf_out = inf_out.to(device)
             elif khadas:
                 from ksnn.types import output_format
-                cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
+                cv_img_path = "/projects" + self.img_files[index].strip("..")
+                cv_img = cv2.imread(cv_img_path, cv2.IMREAD_COLOR)
+                cv_img = cv.resize(cv_img, (imgsz, imgsz))
+                # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
                 inf_out = np.array([yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
+            elif pb or saved_model:
+
+                inf_out = model(**{'input': img})
+                inf_out = torch.tensor(inf_out['output'].numpy())
+                if opt.device == "0": 
+                    inf_out = inf_out.to(device)
+            elif tflite:
+                interpreter.resize_tensor_input(input_details[0]['index'], (1, 3, imgsz, imgsz))
+                interpreter.allocate_tensors()
+                interpreter.set_tensor(input_details[0]['index'], img)
+                interpreter.invoke()
+                inf_out = torch.tensor(interpreter.get_tensor(output_details[0]['index']))
+                if opt.device == "0": 
+                    inf_out = inf_out.to(device)
+
+            # print(inf_out.shape)
             # inf_out, train_out = model(img, augment=augment)  # inference and training outputs
+            
             t0 += time_synchronized() - t
 
             # Compute loss
@@ -358,7 +423,7 @@ def test(data,
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
             plot_images(img, targets, paths, f, names, max_size=imgsz)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
-            plot_images(img, output_to_target(output), paths, f, names, max_size=imgsz)  # predictions
+            plot_images(img, output_to_target(output, width, height), paths, f, names, max_size=imgsz)  # predictions
         
         if save_image:
             # o_img = cv2.imread(paths[0])  # BGR
@@ -366,7 +431,7 @@ def test(data,
             # img0 = o_img.transpose(2, 0, 1)
             # img0 = img0[None] # makes a batch dim of 1 example (channel, height, width) to (batch dim, channel, height, width)
             f = save_dir_image / f'test_batch{batch_i}_pred.jpg'
-            plot_images(img, output_to_target(output), paths, f, names)  # predictions
+            plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy

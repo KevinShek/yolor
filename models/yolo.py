@@ -97,7 +97,7 @@ class IDetect(nn.Module):
     def forward(self, x):
         # x = x.copy()  # for profiling
         z = []  # inference output
-        self.training = not self.export
+        self.training != self.export
         for i in range(self.nl):
             x[i] = self.im[i](self.m[i](self.ia[i](x[i])))  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
