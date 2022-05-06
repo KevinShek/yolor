@@ -5,14 +5,22 @@ from utils.general import *
 import torch
 from torch import nn
 
-try:
-    from mish_cuda import MishCuda as Mish
+# try:
+#     from mish_cuda import MishCuda as Mish
     
-except:
-    class Mish(nn.Module):  # https://github.com/digantamisra98/Mish
-        def forward(self, x):
-            return x * F.softplus(x).tanh()
-    
+# except:
+#     class Mish(nn.Module):  # https://github.com/digantamisra98/Mish
+#         def forward(self, x):
+#             return x * F.softplus(x).tanh()
+
+class Mish(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        x = x * (torch.tanh(torch.nn.functional.softplus(x)))
+        return x
+
 try:
     from pytorch_wavelets import DWTForward, DWTInverse
 

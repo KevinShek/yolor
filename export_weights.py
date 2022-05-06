@@ -7,7 +7,7 @@ from utils.google_utils import attempt_download
 from utils.torch_utils import select_device
 from models.models import *
 import models
-from mish_cuda import MishCuda
+# from mish_cuda import MishCuda
 from utils.activations import Hardswish, Mish
 
 
@@ -56,49 +56,78 @@ def export_torchscript(model, img, file, optimize=True):
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, file, opset=13, train=False, dynamic=True, simplify=True):
+def export_onnx(model, img, file, opset=12, train=False, dynamic=True, simplify=True):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
         import onnx
+        from onnx import shape_inference
+        import onnxruntime as ort
+        # import onnx_graphsurgeon as gs
 
         print(f'\n{prefix} starting export with onnx {onnx.__version__}...')
         f = file.with_suffix('.onnx')
         # torch.onnx.export(model, img, f, verbose=False, opset_version=opset, input_names=['images'],
         #                   output_names=['classes', 'boxes'] if y is None else ['output'])
         #                   # output_names=['output'])
-        torch.onnx.export(model, img, f, verbose=False, opset_version=opset,
-                          training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
-                          do_constant_folding=not train,
-                          input_names=['images'],
-                          output_names=['classes', 'boxes'] if y is None else ['output'],
-                          dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
-                                        'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
-                                        } if dynamic else None)
+        # torch.onnx.export(model, img, f, verbose=False, opset_version=opset,
+        #                   training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
+        #                   do_constant_folding=not train,
+        #                   input_names=['images'],
+        #                   output_names=['classes', 'boxes'] if y is None else ['output'],
+        #                   dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
+        #                                 'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
+        #                                 } if dynamic else None)
+
+        torch.onnx.export(model,               # model being run
+        img,                         # model input (or a tuple for multiple inputs)
+        f,   # where to save the model (can be a file or file-like object)
+        export_params=True,        # store the trained parameter weights inside the model file
+        opset_version=opset,          # the ONNX version to export the model to
+        do_constant_folding=True,  # whether to execute constant folding for optimization
+        input_names = ['input'],   # the model's input names
+        output_names = ['output'], # the model's output names
+        dynamic_axes={'input' : {0 : 'batch_size', 2: 'height', 3:'width'},    # variable length axes
+                    'output' : {0 : 'batch_size', 1: 'n_boxes'}})
 
         # Checks
         model_onnx = onnx.load(f)  # load onnx model
         onnx.checker.check_model(model_onnx)  # check onnx model
         # print(onnx.helper.printable_graph(model_onnx.graph))  # print
 
-        # Simplify
-        if simplify:
-            try:
-                import onnxsim
+        # print('Remove unused outputs')
+        # onnx_module = shape_inference.infer_shapes(onnx.load(f))
+        # while len(onnx_module.graph.output) != 1:
+        #     for output in onnx_module.graph.output:
+        #         if output.name != 'output':
+        #             print('--> remove', output.name)
+        #             onnx_module.graph.output.remove(output)
+        # graph = gs.import_onnx(onnx_module)
+        # graph.cleanup()
+        # graph.toposort()
+        # graph.fold_constants().cleanup()
+        # onnx.save_model(gs.export_onnx(graph), f)
+        # print('Convert successfull !')
 
-                print(
-                    f'{prefix} simplifying with onnx-simplifier {onnxsim.__version__}...')
-                model_onnx, check = onnxsim.simplify(
-                    model_onnx,
-                    dynamic_input_shape=dynamic,
-                    input_shapes={'images': list(img.shape)} if dynamic else None)
-                assert check, 'assert check failed'
-                onnx.save(model_onnx, f)
-            except Exception as e:
-                print(f'{prefix} simplifier failure: {e}')
+        # # Simplify
+        # if simplify:
+        #     try:
+        #         import onnxsim
+
+        #         print(
+        #             f'{prefix} simplifying with onnx-simplifier {onnxsim.__version__}...')
+        #         model_onnx, check = onnxsim.simplify(
+        #             model_onnx,
+        #             dynamic_input_shape=dynamic,
+        #             input_shapes={'images': list(img.shape)} if dynamic else None)
+        #         assert check, 'assert check failed'
+        #         onnx.save(model_onnx, f)
+        #     except Exception as e:
+        #         print(f'{prefix} simplifier failure: {e}')
         print(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
         print(
             f"{prefix} run --dynamic ONNX model inference with: 'python detect.py --weights {f}'")
+        return f
     except Exception as e:
         print(f'{prefix} export failure: {e}')
 
@@ -110,6 +139,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=1, help='batch size')
     parser.add_argument('--cfg', type=str, default='cfg/yolov4.cfg', help='*.cfg path')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--include', nargs='+', default=['torchscript', 'onnx'],
+                        help='available formats are (torchscript, onnx, tflite)')
     opt = parser.parse_args()
     opt.img_size *= 2 if len(opt.img_size) == 1 else 1  # expand
     print(opt)
@@ -117,6 +148,9 @@ if __name__ == '__main__':
 
     #load device
     device = select_device(opt.device, batch_size=opt.batch_size)
+    set_logging()
+    t = time.time()
+    include = [x.lower() for x in opt.include]
 
     # Input
     img = torch.zeros((opt.batch_size, 3, *opt.img_size))  # image size(1,3,320,192) iDetection
@@ -154,19 +188,21 @@ if __name__ == '__main__':
     # model.model[-1].export = True  # set Detect() layer export=True
     y = model(img)  # dry run
 
+    f = None
+
     # TorchScript export
-    try:
+    if 'torchscript' in include:
         export_torchscript(model, img, file)
     #     print('\nStarting TorchScript export with torch %s...' % torch.__version__)
     #     f = opt.weights.replace('.pt', '.torchscript.pt')  # filename
     #     ts = torch.jit.trace(model, img)
     #     ts.save(f)
     #     print('TorchScript export success, saved as %s' % f)
-    except Exception as e:
-        print('TorchScript export failure: %s' % e)
+    # except Exception as e:
+    #     print('TorchScript export failure: %s' % e)
 
     # ONNX export
-    try:
+    if 'onnx' in include:
         export_onnx(model, img, file)
     #     import onnx
 
@@ -181,8 +217,80 @@ if __name__ == '__main__':
     #     onnx.checker.check_model(onnx_model)  # check onnx model
     #     print(onnx.helper.printable_graph(onnx_model.graph))  # print a human readable model
     #     print('ONNX export success, saved as %s' % f)
-    except Exception as e:
-        print('ONNX export failure: %s' % e)
+
+    # except Exception as e:
+    #     print('ONNX export failure: %s' % e)
+
+    if 'tflite' in include:
+        if f is None:
+            f = str(export_onnx(model, img, file))
+
+        import onnx
+        from onnx_tf.backend import prepare
+
+
+        onnx_path = "/projects" + f.strip("..")
+        tensorflow_location = "/projects/weights/tensorflow/"+ file.stem
+        tflite_model_path = "/projects/weights/tensorflow/" + file.stem +".tflite"
+
+        # # print(onnx_path)
+
+        onnx_model = onnx.load(onnx_path)
+        tf_rep = prepare(onnx_model)
+        tf_rep.export_graph(tensorflow_location) # exporting tensorflow model
+
+        import tensorflow as tf
+
+        # Convert the model
+        # https://github.com/hunglc007/tensorflow-yolov4-tflite/blob/9f16748aa3f45ff240608da4bd9b1216a29127f5/convert_tflite.py#L17
+        converter = tf.lite.TFLiteConverter.from_saved_model(tensorflow_location)
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_types = [tf.compat.v1.lite.constants.FLOAT16]
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+        converter.allow_custom_ops = True
+        # converter.target_spec.supported_ops = [
+        # tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+        # tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+        # ]
+
+        tflite_model = converter.convert()
+
+        # Save the model
+        with open(tflite_model_path, 'wb') as f:
+            f.write(tflite_model)
+
+
+        # Load the TFLite model and allocate tensors
+        interpreter = tf.lite.Interpreter(model_path=tflite_model_path)
+        interpreter.allocate_tensors()
+
+        # Get input and output tensors
+        input_details = interpreter.get_input_details()
+
+        print(input_details)
+        interpreter.resize_tensor_input(input_details[0]['index'], (1, 3, opt.img_size[0], opt.img_size[1]))
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        # input and output shape 
+        print(input_details)
+        print("input=",input_details[0]['shape'])
+        print("output=",output_details[0]['shape'])
+
+        import numpy as np
+
+
+        # Test model on random input data
+        interpreter.allocate_tensors()
+        input_shape = input_details[0]['shape']
+        input_data = np.array(np.random.random_sample(input_shape), dtype=np.float32)
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+
+        interpreter.invoke()
+
+        # Use `tensor()` in order to get a pointer to the tensor.
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        print(output_data)
 
     # # CoreML export
     # try:
