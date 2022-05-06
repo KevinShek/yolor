@@ -218,7 +218,7 @@ def test(data,
         data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
     # check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
-    iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
+    iouv = torch.linspace(0.5, 0.95, int(np.round((0.95 - 0.5) / .05)) + 1).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
 
     # Logging
@@ -434,14 +434,18 @@ def test(data,
             plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
 
     # Compute statistics
+    new_stats = np.array(stats)
+    # print(new_stats.shape)
+
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+    # print(stats)
     if len(stats) and stats[0].any():
         if nano:
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=False, fname=save_dir / 'precision-recall_curve.png')
         else:            
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
         p, r, ap50, ap = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1)  # [P, R, AP@0.5, AP@0.5:0.95]
-        mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
+        mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean() # calculate the mean for all classes
         nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
     else:
         nt = torch.zeros(1)

@@ -509,6 +509,15 @@ class VoVCSP(nn.Module):
         return self.cv3(torch.cat((x1,x2), dim=1))
 
 
+class MP(nn.Module):
+    def __init__(self, k=2):
+        super(MP, self).__init__()
+        self.m = nn.MaxPool2d(kernel_size=k, stride=k)
+
+    def forward(self, x):
+        return self.m(x)
+
+
 class SPP(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, k=(5, 9, 13)):

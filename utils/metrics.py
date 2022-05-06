@@ -69,7 +69,10 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, fname='precision-re
     for ci, c in enumerate(unique_classes):
         i = pred_cls == c
         n_l = (target_cls == c).sum()  # number of labels
+        # print(n_l)
         n_p = i.sum()  # number of predictions
+
+        # print(n_p)
 
         if n_p == 0 or n_l == 0:
             continue
@@ -77,6 +80,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, fname='precision-re
             # Accumulate FPs and TPs
             fpc = (1 - tp[i]).cumsum(0)
             tpc = tp[i].cumsum(0)
+            # print(fpc)
+            # print(tpc)
 
             # Recall
             recall = tpc / (n_l + 1e-16)  # recall curve
@@ -94,7 +99,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, fname='precision-re
 
     # Compute F1 score (harmonic mean of precision and recall)
     f1 = 2 * p * r / (p + r + 1e-16)
-
+    # print(len(f1[0]))
+    # print(len(p[0]))
+    # print(len(r[0]))
     if plot:
         py = np.stack(py, axis=1)
         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
