@@ -53,6 +53,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         hide_labels=False,  # hide labels
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
+        library=None
         ):
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
@@ -69,9 +70,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
     # Load model
     w = weights[0] if isinstance(weights, list) else weights
-    classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '']
+    classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.nb', '']
     check_suffix(w, suffixes)  # check weights have acceptable suffix
-    pt, onnx, tflite, pb, saved_model = (suffix == x for x in suffixes)  # backend booleans
+    pt, onnx, tflite, pb, khadas, saved_model = (suffix == x for x in suffixes)  # backend booleans
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
     if pt:
         model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -87,6 +88,14 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         import onnxruntime
         session = onnxruntime.InferenceSession(w, None)
         names = names
+    elif khadas:
+        from ksnn.api import KSNN
+        level = 0
+        yolo = KSNN('VIM3')
+        print(' |---+ KSNN Version: {} +---| '.format(yolo.get_nn_version()))
+        print('Start init neural network ...')
+        yolo.nn_init(library=library, model=w, level=level)
+        print('Done.')
     else:  # TensorFlow models
         try:
             check_requirements(('tensorflow>=2.4.1',))
@@ -141,6 +150,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     for path, img, im0s, vid_cap in dataset:
         if onnx:
             img = img.astype('float32')
+        elif khadas:
+            img = img.astype('float32')  
         else:
             img = torch.from_numpy(img).to(device)
             img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -155,6 +166,13 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = model(img, augment=augment, visualize=visualize)[0]
         elif onnx:
             pred = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+        elif khadas:
+            from ksnn.types import output_format
+            cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
+            cv_img_resize = cv2.resize(cv_img, (imgsz, imgsz))
+
+            inf_out = np.array([yolo.nn_inference(cv_img_resize, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
+            
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -178,7 +196,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = torch.tensor(pred)
 
         # NMS
-        pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+        if khadas: 
+            from khadas_post_process.yolov4_process import yolov4_post_process
+            img_size_orginal = cv_img.shape[0:2]
+            pred = yolov4_post_process(inf_out, conf_thres, iou_thres, img_size_orginal)
+        else:
+            pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
 
         # Second-stage classifier (optional)
@@ -186,6 +209,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = apply_classifier(pred, modelc, img, im0s)
 
         # Process predictions
+        print(pred)
+        print(len(pred))
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
@@ -199,7 +224,31 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, pil=not ascii)
-            if len(det):
+            
+            if pred is not None and len(output[0]) != 0 and khadas:
+                from khadas_post_process.yolov4_process import draw
+                outputs = output[0].tolist()
+                outputs = np.array(outputs)
+                boxes = outputs[:, :4]
+                scores = outputs[:,4]
+                classes = outputs[:,5]
+                classes_int = classes.astype(int)
+                
+                draw(im0s, boxes, scores, classes_int)
+
+                # Write results
+                for box, score, cl in zip(boxes, scores, classes):
+                    if save_txt:  # Write to file
+                        # x, y, w, h = box
+                        # x *= im0s.shape[1]
+                        # y *= im0s.shape[0]
+                        # w *= im0s.shape[1]
+                        # h *= im0s.shape[0]
+                        line = (cl, box, score)  # label format
+                        with open(txt_path + '.txt', 'a') as f:
+                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
+            elif len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
@@ -290,6 +339,7 @@ def parse_opt():
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
+    parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     return opt

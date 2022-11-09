@@ -32,6 +32,8 @@ def organising_pre_data(data):
     LISTSIZE = 6 # number of classes + 5
     SPAN = 3
 
+
+    # for getting the small, medium and large sizes
     GRID0 = int(sqrt(len(data[0][2]) / (LISTSIZE * SPAN)))
     GRID1 = int(sqrt(len(data[0][1]) / (LISTSIZE * SPAN)))
     GRID2 = int(sqrt(len(data[0][0]) / (LISTSIZE * SPAN)))
@@ -90,7 +92,7 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
-def process(input, mask, anchors):
+def process(input, mask, anchors, img_size):
 
     anchors = [anchors[i] for i in mask]
     grid_h, grid_w = map(int, input.shape[0:2])
@@ -113,7 +115,7 @@ def process(input, mask, anchors):
 
     box_xy += grid
     box_xy /= (grid_w, grid_h)
-    box_wh /= (416, 416)
+    box_wh /= (img_size[1], img_size[0])
     box_xy -= (box_wh / 2.)
     box = np.concatenate((box_xy, box_wh), axis=-1)
 
@@ -163,17 +165,23 @@ def nms_boxes(boxes, scores, NMS_THRESH):
     return keep
 
 
-def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6):
+def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, img_size):
 
     input_data = organising_pre_data(data)
 
+    # yolov4-csp
     masks = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
     anchors = [[12, 16], [19, 36], [40, 28], [36, 75], [76, 55],
             [72, 146], [142, 110], [192, 243], [459, 401]]
+    
+    # yolov4-leaky
+    # masks = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
+    # anchors = [[10, 13], [16, 30], [33, 23], [30, 61], [62, 45],
+    #         [59, 119], [116, 90], [156, 198], [373, 326]]
 
     boxes, classes, scores = [], [], []
     for input,mask in zip(input_data, masks):
-        b, c, s = process(input, mask, anchors)
+        b, c, s = process(input, mask, anchors, img_size)
         b, c, s = filter_boxes(b, c, s, OBJ_THRESH)
         boxes.append(b)
         classes.append(c)
@@ -327,6 +335,7 @@ if __name__ == '__main__':
     img = cv.imread(picture, cv.IMREAD_COLOR)
     img_resized = cv.resize(img, (640, 640))
     cv_img.append(img)
+    img_size = img.shape[0:2]
     print('Done.')
 
     print('Start inference ...')
@@ -339,7 +348,7 @@ if __name__ == '__main__':
     end = time.time()
     print('Done. inference time: ', end - start)
 
-    output = yolov4_post_process(data)
+    output = yolov4_post_process(data, img_size=img_size)
 
     if boxes is not None:
         draw(img, output[0], output[1], output[2])

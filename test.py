@@ -73,6 +73,7 @@ def test(data,
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         if save_image:
+            print("hi")
             save_dir_image = Path(increment_path(Path(opt.project) / opt.name / "images", exist_ok=opt.exist_ok))  # increment run
             (save_dir_image).mkdir(parents=True, exist_ok=True)  # make dir
 
@@ -161,7 +162,10 @@ def test(data,
             if opt.device == "0":
                 import tensorflow as tf
                 physical_devices = tf.config.list_physical_devices('GPU')
-                tf.config.experimental.set_memory_growth(physical_devices[0], True)
+                if not nano:
+                    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+                else:
+                    tf.config.experimental.set_virtual_device_configuration(physical_devices[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=512)])
                 # tf.config.experimental.set_virtual_device_configuration(physical_devices[0], [
                 #     tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)]) # this will limit your GPU's memory allowance
             if saved_model:  # SavedModel
@@ -169,6 +173,7 @@ def test(data,
                 print(f'Loading {w} for TensorFlow SavedModel inference...')
                 import tensorflow as tf
                 model = tf.keras.models.load_model(w)
+                # tf.compat.v1.enable_eager_execution(device_policy="DEVICE_PLACEMENT_SILENT")
                 # model = tf.saved_model.load(w)
                 # inference = model.signatures["serving_default"]
                 # print(inference)
@@ -222,11 +227,11 @@ def test(data,
     niou = iouv.numel()
 
     # Logging
-    log_imgs, wandb = min(log_imgs, 100), None  # ceil
-    try:
-        import wandb  # Weights & Biases
-    except ImportError:
-        log_imgs = 0
+    # log_imgs, wandb = min(log_imgs, 100), None  # ceil
+    # try:
+    #     import wandb  # Weights & Biases
+    # except ImportError:
+    log_imgs, wandb = 0, None
 
     # Dataloader
     if not training:

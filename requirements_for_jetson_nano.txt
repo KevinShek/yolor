@@ -1,0 +1,45 @@
+# pip install -qr requirements.txt
+# pip install -r requirements.txt
+
+# base ----------------------------------------
+cython
+matplotlib>=3.2.2
+numpy>=1.18.5
+# to install opencv-python for jetson nano check if you have updated your pip otherwise check the following link:
+# https://exerror.com/modulenotfounderror-no-module-named-skbuild/
+opencv-python>=4.1.2
+Pillow
+PyYAML>=5.3.1
+scipy>=1.4.1
+# to fix cv2 missing imports: https://stackoverflow.com/questions/55313610/importerror-libgl-so-1-cannot-open-shared-object-file-no-such-file-or-directo
+# apt-get install ffmpeg libsm6 libxext6  -y
+
+# recommendation use the tensorflow container by NGC and then install PyTorch package
+# to pip install pytorch:
+# pip3 install torch==1.9.0 torchvision==0.10.0 torchaudio===0.9.0 -f https://download.pytorch.org/whl/torch_stable.html  
+# install pytorch/tensorflow for jetson nano:
+# https://qengineering.eu/install-pytorch-on-jetson-nano.html
+# https://elinux.org/Jetson_Zoo#TensorFlow
+tqdm>=4.41.0
+
+# logging -------------------------------------
+wandb
+
+# plotting ------------------------------------
+seaborn>=0.11.0
+pandas
+
+# export --------------------------------------
+# coremltools>=4.1
+# onnx>=1.9.0  # ONNX export
+# onnx-simplifier>=0.3.6  # ONNX simplifier
+# onnxruntime-gpu
+# tensorflow>=2.4.1  # TFLite export
+# tensorflowjs>=3.9.0  # TF.js export
+# tflite-runtime
+ 
+# scikit-learn==0.19.2  # for coreml quantization
+
+# extras --------------------------------------
+# thop  # FLOPS computation
+pycocotools==2.0.2  # COCO mAP
