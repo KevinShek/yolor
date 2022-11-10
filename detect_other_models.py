@@ -287,8 +287,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                                 if not save_crop:
                                     if value == 0 or value == 1:
                                         continue
-                                    else:
-                                        image_number = 0
+                                    # else:
+                                        # image_number = 0
                                 image_name = f"{save_path}_{data}_{image_number}.jpg"
                                 image = list_of_images[value]
                                 if image is not None:
