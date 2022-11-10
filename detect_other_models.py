@@ -284,6 +284,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                         for i in range(int(len(list_of_images)/3)):
                             name_of_results = ["target", "target_location", "all_targets"]
                             for value, data in enumerate(name_of_results):
+                                if not save_crop:
+                                    if value == 0 or value == 1:
+                                        continue
                                 image_name = f"{save_path}_{data}_{i}.jpg"
                                 image = list_of_images[value]
                                 if image is not None:

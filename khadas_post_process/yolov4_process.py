@@ -299,8 +299,8 @@ def draw(image, boxes, scores, classes):
         possible_target = image.copy()
         current_frame = image
         x, y, w, h = box
-        print('class: {}, score: {}'.format(CLASSES[cl], score))
-        print('box coordinate left,top,right,down: [{}, {}, {}, {}]'.format(x, y, x+w, y+h))
+        # print('class: {}, score: {}'.format(CLASSES[cl], score))
+        # print('box coordinate left,top,right,down: [{}, {}, {}, {}]'.format(x, y, x+w, y+h))
         x *= image.shape[1]
         y *= image.shape[0]
         w *= image.shape[1]
