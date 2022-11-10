@@ -165,7 +165,7 @@ def nms_boxes(boxes, scores, NMS_THRESH):
     return keep
 
 
-def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, MAX_BOXES=300, img_size):
+def yolov4_post_process(data, img_size, OBJ_THRESH=0.1, NMS_THRESH=0.6, MAX_BOXES=300):
 
     input_data = organising_pre_data(data)
 

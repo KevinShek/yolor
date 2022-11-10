@@ -240,7 +240,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         if khadas: 
             from khadas_post_process.yolov4_process import yolov4_post_process, draw
             img_size_orginal = im0s.shape[0:2]
-            output = yolov4_post_process(pred, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det, img_size=img_size_orginal)
+            output = yolov4_post_process(pred, img_size=img_size_orginal, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
         else:
             output = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
