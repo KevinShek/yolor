@@ -23,7 +23,7 @@ from math import sqrt
 # GRID2 = 80 # 640
 
 NUM_CLS = 1
-MAX_BOXES = 300
+# MAX_BOXES = 300
 
 CLASSES = "human"
 
@@ -57,7 +57,7 @@ def organising_pre_data(data):
     return input_data
 
 
-def organising_post_data(boxes, classes, scores, NMS_THRESH):
+def organising_post_data(boxes, classes, scores, NMS_THRESH, MAX_BOXES):
     nc = 0
     for x in classes:
         if x == 0:
@@ -165,7 +165,7 @@ def nms_boxes(boxes, scores, NMS_THRESH):
     return keep
 
 
-def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, img_size):
+def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, MAX_BOXES=300, img_size):
 
     input_data = organising_pre_data(data)
 
@@ -195,7 +195,7 @@ def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, img_size):
     # classes = torch.from_numpy(classes.astype(np.float64))
     # scores = torch.from_numpy(scores.astype(np.float64))
 
-    # output = organising_post_data(boxes, classes, scores, NMS_THRESH)
+    # output = organising_post_data(boxes, classes, scores, NMS_THRESH, MAX_BOXES)
 
     time_limit = 10.0  # seconds to quit after
     t = time.time()
@@ -269,9 +269,35 @@ def yolov4_post_process(data, OBJ_THRESH=0.1, NMS_THRESH=0.6, img_size):
 
     return output
 
+# def draw(image, boxes, scores, classes):
+
+#     for box, score, cl in zip(boxes, scores, classes):
+#         x, y, w, h = box
+#         print('class: {}, score: {}'.format(CLASSES[cl], score))
+#         print('box coordinate left,top,right,down: [{}, {}, {}, {}]'.format(x, y, x+w, y+h))
+#         x *= image.shape[1]
+#         y *= image.shape[0]
+#         w *= image.shape[1]
+#         h *= image.shape[0]
+#         top = max(0, np.floor(x + 0.5).astype(int))
+#         left = max(0, np.floor(y + 0.5).astype(int))
+#         right = min(image.shape[1], np.floor(x + w + 0.5).astype(int))
+#         bottom = min(image.shape[0], np.floor(y + h + 0.5).astype(int))
+
+#         cv.rectangle(image, (top, left), (right, bottom), (255, 0, 0), 2)
+#         cv.putText(image, '{0} {1:.2f}'.format(CLASSES[cl], score),
+#                     (top, left - 6),
+#                     cv.FONT_HERSHEY_SIMPLEX,
+#                     0.6, (0, 0, 255), 2)
+
+
 def draw(image, boxes, scores, classes):
+    list_of_images = []
+    image_copy = image.copy()
 
     for box, score, cl in zip(boxes, scores, classes):
+        possible_target = image.copy()
+        current_frame = image
         x, y, w, h = box
         print('class: {}, score: {}'.format(CLASSES[cl], score))
         print('box coordinate left,top,right,down: [{}, {}, {}, {}]'.format(x, y, x+w, y+h))
@@ -281,15 +307,21 @@ def draw(image, boxes, scores, classes):
         h *= image.shape[0]
         top = max(0, np.floor(x + 0.5).astype(int))
         left = max(0, np.floor(y + 0.5).astype(int))
-        right = min(image.shape[1], np.floor(x + w + 0.5).astype(int))
-        bottom = min(image.shape[0], np.floor(y + h + 0.5).astype(int))
+        right = min(image.shape[1], np.floor(w + 0.5).astype(int))
+        bottom = min(image.shape[0], np.floor(h + 0.5).astype(int))
 
-        cv.rectangle(image, (top, left), (right, bottom), (255, 0, 0), 2)
-        cv.putText(image, '{0} {1:.2f}'.format(CLASSES[cl], score),
-                    (top, left - 6),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    0.6, (0, 0, 255), 2)
+        colour = image_copy[left:bottom, top:right]
 
+        for image_type in [possible_target, current_frame]:
+            cv.rectangle(image_type, (top, left), (right, bottom), (255, 0, 0), 2)
+            cv.putText(image_type, '{0} {1:.2f}'.format(CLASSES[cl], score),
+                        (top, left - 6),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.6, (0, 0, 255), 2)
+        
+        list_of_images.extend((colour, possible_target, current_frame))
+    
+    return list_of_images
 
 if __name__ == '__main__':
 

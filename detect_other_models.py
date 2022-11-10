@@ -1,4 +1,4 @@
-# YOLOv5 🚀 by Ultralytics, GPL-3.0 license
+# YOLOv5 ðŸš€ by Ultralytics, GPL-3.0 license
 """
 Run inference on images, videos, directories, streams, etc.
 
@@ -10,6 +10,13 @@ import argparse
 import sys
 import time
 from pathlib import Path
+
+# This call to matplotlib.use() has no effect because the backend has already
+# been chosen; matplotlib.use() must be called *before* pylab, matplotlib.pyplot,
+# or matplotlib.backends is imported for the first time.
+import matplotlib
+matplotlib.use('Agg')  # for writing to files only
+
 
 import cv2
 import numpy as np
@@ -34,7 +41,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         imgsz=640,  # inference size (pixels)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
-        max_det=1000,  # maximum detections per image
+        max_det=300,  # maximum detections per image
         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         view_img=False,  # show results
         save_txt=False,  # save results to *.txt
@@ -53,7 +60,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         hide_labels=False,  # hide labels
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
-        library=None
+        library=None # for khadas
         ):
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
@@ -65,15 +72,22 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
     # Initialize
     set_logging()
-    device = select_device(device)
-    half &= device.type != 'cpu'  # half precision only supported on CUDA
+    # device = select_device(device)
 
     # Load model
     w = weights[0] if isinstance(weights, list) else weights
-    classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.nb', '']
+    classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '', '.weights']
     check_suffix(w, suffixes)  # check weights have acceptable suffix
-    pt, onnx, tflite, pb, khadas, saved_model = (suffix == x for x in suffixes)  # backend booleans
+    pt, onnx, tflite, pb, trt, khadas, saved_model, darknet  = (suffix == x for x in suffixes)  # backend booleans
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
+    pt_jit = pt and 'torchscript' in w
+    auto = False
+    list_of_images = []
+    if not khadas:
+        half &= device.type != 'cpu'  # half precision only supported on CUDA
+    if khadas:
+        opt.device = "cpu"
+    device = select_device(opt.device, batch_size=1)
     if pt:
         model = attempt_load(weights, map_location=device)  # load FP32 model
         stride = int(model.stride.max())  # model stride
@@ -88,6 +102,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         import onnxruntime
         session = onnxruntime.InferenceSession(w, None)
         names = names
+    elif trt:
+        from trt_loader.trt_loader import TrtModel
+        model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
+
     elif khadas:
         from ksnn.api import KSNN
         level = 0
@@ -135,11 +153,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     # Dataloader
     if webcam:
         view_img = check_imshow()
-        cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt)
+        if not khadas:
+            cudnn.benchmark = True  # set True to speed up constant image size inference
+        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride)
         bs = len(dataset)  # batch_size
     else:
-        dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt)
+        dataset = LoadImages(source, img_size=imgsz, auto_size=stride)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -149,30 +168,52 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
         if onnx:
+            img = img.numpy()
             img = img.astype('float32')
+            # img = torch.from_numpy(img).to(device)
+        elif trt:
+            img = img.numpy()
+            img = img.astype('float16')
         elif khadas:
+            #print(img)
+            #print(type(img))
+            #if type(img) is np.array:
+            #    print("hi")
+            #    img = img.numpy()
             img = img.astype('float32')  
+        elif saved_model:
+            img = img.numpy()
+            img = img.astype('float32') # it is expecting a float 32 argument
         else:
-            img = torch.from_numpy(img).to(device)
+            img = img.to(device, non_blocking=True)
             img = img.half() if half else img.float()  # uint8 to fp16/32
-        img = img / 255.0  # 0 - 255 to 0.0 - 1.0
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if len(img.shape) == 3:
             img = img[None]  # expand for batch dim
 
         # Inference
         t1 = time_sync()
-        if pt:
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-            pred = model(img, augment=augment, visualize=visualize)[0]
+        if pt or darknet:
+            if pt_jit:
+                pred = model(img)[0]
+            else:
+                visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+                pred = model(img, augment=augment, visualize=visualize)[0]
         elif onnx:
             pred = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+            if opt.device == "0": 
+                pred = pred.to(device)
+        elif trt:
+            pred = torch.tensor(model.run(img))
+            if opt.device == "0": 
+                pred = pred.to(device)
         elif khadas:
             from ksnn.types import output_format
-            cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
-            cv_img_resize = cv2.resize(cv_img, (imgsz, imgsz))
-
-            inf_out = np.array([yolo.nn_inference(cv_img_resize, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
-            
+            cv_img = list()
+            resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+            cv_img.append(resize_img)
+            # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
+            pred = np.array([yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -197,11 +238,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
         # NMS
         if khadas: 
-            from khadas_post_process.yolov4_process import yolov4_post_process
+            from khadas_post_process.yolov4_process import yolov4_post_process, draw
             img_size_orginal = cv_img.shape[0:2]
-            pred = yolov4_post_process(inf_out, conf_thres, iou_thres, img_size_orginal)
+            output = yolov4_post_process(pred, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det, img_size=img_size_orginal )
         else:
-            pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+            output = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+        # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
 
         # Second-stage classifier (optional)
@@ -209,8 +251,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = apply_classifier(pred, modelc, img, im0s)
 
         # Process predictions
-        print(pred)
-        print(len(pred))
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
@@ -224,29 +264,30 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, pil=not ascii)
-            
-            if pred is not None and len(output[0]) != 0 and khadas:
-                from khadas_post_process.yolov4_process import draw
-                outputs = output[0].tolist()
-                outputs = np.array(outputs)
-                boxes = outputs[:, :4]
-                scores = outputs[:,4]
-                classes = outputs[:,5]
-                classes_int = classes.astype(int)
-                
-                draw(im0s, boxes, scores, classes_int)
+            if khadas:
+                if output is not None and len(output[0]) != 0:
+                    outputs = output[0].tolist()
+                    outputs = np.array(outputs)
+                    boxes = outputs[:, :4]
+                    scores = outputs[:,4]
+                    classes = outputs[:,5]
+                    classes_int = classes.astype(int)
+                    
+                    list_of_images = draw(im0s, boxes, scores, classes_int)
 
-                # Write results
-                for box, score, cl in zip(boxes, scores, classes):
-                    if save_txt:  # Write to file
-                        # x, y, w, h = box
-                        # x *= im0s.shape[1]
-                        # y *= im0s.shape[0]
-                        # w *= im0s.shape[1]
-                        # h *= im0s.shape[0]
-                        line = (cl, box, score)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                    if save_txt:
+                        for box, score, class_int in zip(boxes, scores, classes_int):
+                            line = (class_int, box, score) if save_conf else (class_int, box)  # label format
+                            with open(txt_path + '.txt', 'a') as f:
+                                f.write((f'{line}') + '\n')
+                    if save_img:
+                        for i in range(int(len(list_of_images)/3)):
+                            name_of_results = ["target", "target_location", "all_targets"]
+                            for value, data in enumerate(name_of_results):
+                                image_name = f"{save_path}_{data}_{i}.jpg"
+                                image = list_of_images[value]
+                                if image is not None:
+                                    cv2.imwrite(image_name, image)
 
             elif len(det):
                 # Rescale boxes from img_size to im0 size
@@ -279,13 +320,18 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
             # Stream results
-            im0 = annotator.result()
+            if khadas:
+                if len(list_of_images) > 0:
+                    number_of_set_of_images = len(list_of_images)
+                    im0 = list_of_images[number_of_set_of_images - 1]
+            else:
+                im0 = annotator.result()
             if view_img:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
-            if save_img:
+            if save_img and not khadas:
                 if dataset.mode == 'image':
                     cv2.imwrite(save_path, im0)
                 else:  # 'video' or 'stream'
@@ -347,7 +393,7 @@ def parse_opt():
 
 def main(opt):
     print(colorstr('detect: ') + ', '.join(f'{k}={v}' for k, v in vars(opt).items()))
-    check_requirements(exclude=('tensorboard', 'thop'))
+    # check_requirements(exclude=('tensorboard', 'thop'))
     run(**vars(opt))
 
 
