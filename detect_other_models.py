@@ -281,15 +281,15 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                             with open(txt_path + '.txt', 'a') as f:
                                 f.write((f'{line}') + '\n')
                     if save_img:
-                        for i in range(int(len(list_of_images)/3)):
+                        for image_number in range(int(len(list_of_images)/3)):
                             name_of_results = ["target", "target_location", "all_targets"]
                             for value, data in enumerate(name_of_results):
                                 if not save_crop:
                                     if value == 0 or value == 1:
                                         continue
                                     else:
-                                        i = 0
-                                image_name = f"{save_path}_{data}_{i}.jpg"
+                                        image_number = 0
+                                image_name = f"{save_path}_{data}_{image_number}.jpg"
                                 image = list_of_images[value]
                                 if image is not None:
                                     cv2.imwrite(image_name, image)
