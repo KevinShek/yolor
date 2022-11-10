@@ -273,7 +273,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                     classes = outputs[:,5]
                     classes_int = classes.astype(int)
                     
-                    list_of_images = draw(im0s, boxes, scores, classes_int)
+                    list_of_images = draw(resize_img, boxes, scores, classes_int)
 
                     if save_txt:
                         for box, score, class_int in zip(boxes, scores, classes_int):
