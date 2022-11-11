@@ -83,11 +83,11 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     pt_jit = pt and 'torchscript' in w
     auto = False
     list_of_images = []
-    if not khadas:
-        half &= device.type != 'cpu'  # half precision only supported on CUDA
     if khadas:
         opt.device = "cpu"
     device = select_device(opt.device, batch_size=1)
+    if not khadas:
+        half &= device.type != 'cpu'  # half precision only supported on CUDA
     if pt:
         model = attempt_load(weights, map_location=device)  # load FP32 model
         stride = int(model.stride.max())  # model stride

@@ -7,6 +7,7 @@ matplotlib>=3.2.2
 numpy>=1.18.5
 # to install opencv-python for jetson nano check if you have updated your pip otherwise check the following link:
 # https://exerror.com/modulenotfounderror-no-module-named-skbuild/
+# if opencv having issue use version 4.5.4.60 as opencv-python >= 4.5.4.60 provides an error due to the way cv2 adapted for python 3.10 https://qengineering.eu/install-opencv-4.5-on-jetson-nano.html 
 opencv-python>=4.1.2
 Pillow
 PyYAML>=5.3.1
