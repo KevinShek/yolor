@@ -338,7 +338,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
             # Save results (image with detections)
             if save_img and not khadas:
-                if dataset.mode == 'image':
+                if dataset.mode == 'images':
                     cv2.imwrite(save_path, im0)
                 else:  # 'video' or 'stream'
                     if vid_path[i] != save_path:  # new video
