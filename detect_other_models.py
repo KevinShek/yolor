@@ -198,8 +198,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             if pt_jit:
                 pred = model(img)[0]
             else:
-                visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-                pred = model(img, augment=augment, visualize=visualize)[0]
+                # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+                pred = model(img, augment=augment)[0]
         elif onnx:
             pred = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
             if opt.device == "0": 
