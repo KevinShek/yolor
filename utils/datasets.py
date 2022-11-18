@@ -286,7 +286,7 @@ class LoadWebcam:  # for inference
 
 
 class LoadStreams:  # multiple IP or RTSP cameras
-    def __init__(self, sources='streams.txt', img_size=640):
+    def __init__(self, sources='streams.txt', img_size=640, khadas_camera=False):
         self.mode = 'images'
         self.img_size = img_size
 
@@ -307,7 +307,12 @@ class LoadStreams:  # multiple IP or RTSP cameras
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = cap.get(cv2.CAP_PROP_FPS) % 100
-            _, self.imgs[i] = cap.read()  # guarantee first frame
+            if khadas_camera:
+                _, im0 = cap.read()  # guarantee first frame
+                im0 = cv2.flip(im0, 1)  # flip left-right
+                self.imgs[i] = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, im0) # undistort the frame
+            else:
+                _, self.imgs[i] = cap.read()  # guarantee first frame
             thread = Thread(target=self.update, args=([i, cap]), daemon=True)
             print(' success (%gx%g at %.2f FPS).' % (w, h, fps))
             thread.start()

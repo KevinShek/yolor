@@ -116,7 +116,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         print('Done.')
     else:  # TensorFlow models
         try:
-            check_requirements(('tensorflow>=2.4.1',))
+            #check_requirements(('tensorflow>=2.4.1',))
             import tensorflow as tf
             if pb:  # https://www.tensorflow.org/guide/migrate#a_graphpb_or_graphpbtxt
                 def wrap_frozen_graph(gd, inputs, outputs):

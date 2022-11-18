@@ -12,6 +12,7 @@ opencv-python>=4.1.2
 Pillow
 PyYAML>=5.3.1
 scipy>=1.4.1
+globox
 # to fix cv2 missing imports: https://stackoverflow.com/questions/55313610/importerror-libgl-so-1-cannot-open-shared-object-file-no-such-file-or-directo
 # apt-get install ffmpeg libsm6 libxext6  -y
 

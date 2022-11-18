@@ -246,3 +246,59 @@ def wh_iou(wh1, wh2, eps=1e-7):
     wh2 = wh2[None]  # [1,M,2]
     inter = torch.min(wh1, wh2).prod(2)  # [N,M]
     return inter / (wh1.prod(2) + wh2.prod(2) - inter + eps)  # iou = inter / (area1 + area2 - inter)
+
+
+def parsing_csv_for_coco():
+    def parsing_csv(csv_path, classes):
+    parsed_datas = []
+    with open(csv_path, newline='') as csvfile:
+        rows = csv.reader(csvfile, delimiter=' ', quotechar='|')
+        for row in rows:
+            task, img_path, label, rxmin, rymin,_,_,rxmax,rymax,_,_ = row[0].split(",", -1)
+            if task == "TEST":
+                rbox = [float(rxmin), float(rymin), float(rxmax), float(rymax)]
+                class_id = classes.index(f"{label}")
+                parsed_data = {
+                    "img_path": img_path,
+                    "class_id": class_id,
+                    "bounding_box": rbox
+                }
+                parsed_datas.append(parsed_data)
+
+    return parsed_datas
+
+
+def coco_benchmark(anno_json, pred_json):
+    print("starting coco metric test")
+    from pycocotools.coco import COCO
+    from pycocotools.cocoeval import COCOeval
+
+    anno = COCO(anno_json)  # init annotations api
+    pred = anno.loadRes(pred_json)  # init predictions api
+    evalcoco = COCOeval(anno, pred, 'bbox')
+    # https://github.com/cocodataset/cocoapi/blob/8c9bcc3cf640524c4c20a9c40e89cb6a2f2fa0e9/PythonAPI/pycocotools/cocoeval.py#L498
+    # evalcoco.params.iouThrs = np.linspace(0.5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)   
+    # evalcoco.params.iouThrs = np.linspace(0.01, 0.01, int(np.round((0.01 - 0.01) / .05)) + 1, endpoint=True)   
+    # evalcoco.params.maxDets = [1, 100, 1000]
+    evalcoco.evaluate()
+    evalcoco.accumulate()
+    evalcoco.summarize()
+    map, map50 = evalcoco.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+
+    return evalcoco
+
+
+def saving_coco_result(save_dir, stats):
+    iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3} ] = {:0.3}'
+    titleStr = ["Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", "Average Precision", 
+                "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall", "Average Recall"]
+    iouStr = ["0.50:0.95", "0.50", "0.75", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", "0.50:0.95", 
+                "0.50:0.95", "0.50:0.95"]
+    typeStr = ["(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AP)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)", "(AR)"]
+    areaRng = ["all", "all", "all", "small", "medium", "large", "all", "all", "all", "small", "medium", "large"]
+    maxDets = ["100", "100", "100", "100", "100", "100", "1", "100", "100", "100", "100", "100"]
+
+
+    with open(save_dir / 'information.txt', 'a') as f:
+        for i, c in enumerate(stats.stats):
+            f.write(iStr.format(titleStr[i], typeStr[i], iouStr[i], areaRng[i], maxDets[i], c) + '\n')

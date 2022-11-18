@@ -56,7 +56,8 @@ def test(data,
          save_conf=False,
          plots=True,
          log_imgs=0, # number of logged images
-         library=None):  
+         library=None,
+         coco_id_conversion= False):  
 
     # Initialize/load model and set device
     training = model is not None
@@ -255,9 +256,19 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+    if save_json and coco_id_conversion:
+        from globox import AnnotationSet # https://github.com/laclouis5/globox
+        anno_json = Path("..", "datasets", "heridal", "testImages", "labels", "labels.json")  # annotations json
+        boxes = AnnotationSet.from_coco(file_path=file_path) # retrieve that boxes data
+        imageid_to_id = {im: i for i, im in enumerate(sorted(list(boxes.image_ids)))} # making a dict of image_name to id
+        list_of_ids = [count for count in range(len(list(boxes.image_ids)))]
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
     # img = img.to(device, non_blocking=True)
     # img = img.half() if half else img.float()  # uint8 to fp16/32
+        if save_json and coco_id_conversion:
+            image_basename_with_extension = paths.split("/", -1)[-1]
+            image_id_coco_format = imageid_to_id[image_basename_with_extension] # example on how to locate the id attached to the image name
+
         if onnx:
             img = img.numpy()
             img = img.astype('float32')
@@ -387,7 +398,7 @@ def test(data,
                 box = xyxy2xywh(box)  # xywh
                 box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
                 for p, b in zip(pred.tolist(), box.tolist()):
-                    jdict.append({'image_id': image_id,
+                    jdict.append({'image_id': image_id_coco_format if coco_id_conversion else image_id,
                                 'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
                                 'bbox': [round(x, 3) for x in b],
                                 'score': round(p[4], 5)})
@@ -490,6 +501,8 @@ def test(data,
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
         if is_coco:
             anno_json = glob.glob('../coco/annotations/instances_val*.json')[0]  # annotations json
+        elif coco_id_conversion:
+            anno_json = anno_json
         else:
             anno_json = glob.glob('../heridal/testImages/labels/labels.json')  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
@@ -508,6 +521,8 @@ def test(data,
             eval = COCOeval(anno, pred, 'bbox')
             if is_coco:
                 eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+            elif coco_id_conversion:
+                eval.params.imgIds = list_of_ids  # image IDs to evaluate
             else:
                 eval.params.imgIds = [Path(x).stem for x in dataloader.dataset.img_files]  # image IDs to evaluate (has to be in int)
             eval.evaluate()
@@ -566,6 +581,7 @@ if __name__ == '__main__':
     parser.add_argument('--names', type=str, default='data/coco.names', help='*dataset class names path')
     parser.add_argument('--cfg', type=str, default='cfg/yolor_p6.cfg', help='*.cfg path')
     parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
+    parser.add_argument('--coco-id-conversion', action='store_true', help='coco id sorted for file that uses the enumrate and sort method of numbering')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
@@ -586,6 +602,7 @@ if __name__ == '__main__':
              save_image=opt.save_img,
              save_conf=opt.save_conf,
              library=opt.library,
+             coco_id_conversion= opt.coco_id_conversion,
              )
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
