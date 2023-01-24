@@ -64,6 +64,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         auto=True, # auto is for dynamic models but for static models turn this "False"
         opencv_onnx=False 
         ):
+    if not auto:
+        auto = False
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://', 'https://'))
@@ -85,7 +87,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         onnx = False
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
     pt_jit = pt and 'torchscript' in w
-    auto = False
     list_of_images = []
     if khadas:
         opt.device = "cpu"
@@ -421,7 +422,7 @@ def parse_opt():
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
-    parser.add_argument('--auto', type=str, default=True, help='Turn this on if you using dynamic inputs but if you are using static inputs then turn this False')
+    parser.add_argument('--auto', action='store_true', help='Turn this on if you using dynamic inputs but if you are using static inputs then turn this False')
     parser.add_argument('--opencv_onnx', default=False, action='store_true', help='are ypu using opencv to load onnx models?')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
