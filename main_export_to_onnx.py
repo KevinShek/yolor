@@ -13,7 +13,7 @@ import time
 from onnx import shape_inference
 from models.models import Darknet, load_darknet_weights
 
-from mish_cuda import MishCuda
+# from mish_cuda import MishCuda
 
 sys.path.append('./')  # to run '$ python *.py' files in subdirectories
 
@@ -95,7 +95,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, weights, opset=12, train=False, dynamic=True, simplify=False):
+def export_onnx(model, img, weights, opset=11, train=False, dynamic=False, simplify=True):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
@@ -104,7 +104,7 @@ def export_onnx(model, img, weights, opset=12, train=False, dynamic=True, simpli
         import onnx_graphsurgeon as gs
 
         print(f'\n{prefix} starting export with onnx {onnx.__version__}...')
-        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}-test.onnx')  # filename
+        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}_opset_{opset}_based_on_yolov5.onnx')  # filename
         # torch.onnx.export(model, img, f, verbose=False, opset_version=12, input_names=['images'],
         #                   output_names=['classes', 'boxes'] if y is None else ['output'])
                           # output_names=['output'])
@@ -117,21 +117,34 @@ def export_onnx(model, img, weights, opset=12, train=False, dynamic=True, simpli
         #                                 'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
         #                                 } if dynamic else None)
 
+        #     # Export the model
+        # torch.onnx.export(model,               # model being run
+        #               img,                         # model input (or a tuple for multiple inputs)
+        #               f,   # where to save the model (can be a file or file-like object)
+        #               export_params=True,        # store the trained parameter weights inside the model file
+        #               opset_version=opset,          # the ONNX version to export the model to
+        #               do_constant_folding=True,  # whether to execute constant folding for optimization
+        #               input_names = ['input'],   # the model's input names
+        #               output_names = ['output'], # the model's output names
+        #               dynamic_axes={'input' : {0 : 'batch_size', 2: 'height', 3:'width'},    # variable length axes
+        #                             'output' : {0 : 'batch_size', 1: 'n_boxes'}})
+
             # Export the model
         torch.onnx.export(model,               # model being run
                       img,                         # model input (or a tuple for multiple inputs)
                       f,   # where to save the model (can be a file or file-like object)
-                      export_params=True,        # store the trained parameter weights inside the model file
+                      verbose = False,
                       opset_version=opset,          # the ONNX version to export the model to
                       do_constant_folding=True,  # whether to execute constant folding for optimization
                       input_names = ['input'],   # the model's input names
                       output_names = ['output'], # the model's output names
                       dynamic_axes={'input' : {0 : 'batch_size', 2: 'height', 3:'width'},    # variable length axes
-                                    'output' : {0 : 'batch_size', 1: 'n_boxes'}})
+                                    'output' : {0 : 'batch_size', 1: 'n_boxes'}} if dynamic else None)
+
 
         # # Checks
-        # model_onnx = onnx.load(f)  # load onnx model
-        # onnx.checker.check_model(model_onnx)  # check onnx model
+        model_onnx = onnx.load(f)  # load onnx model
+        onnx.checker.check_model(model_onnx)  # check onnx model
         # print(onnx.helper.printable_graph(model_onnx.graph))  # print
 
         print('Remove unused outputs')
@@ -153,14 +166,14 @@ def export_onnx(model, img, weights, opset=12, train=False, dynamic=True, simpli
             try:
                 from onnxsim import simplify
 
-                onnx_model, check = simplify(model_onnx, check_n=3)
+                onnx_model, check = simplify(model_onnx, check_n=3, input_shape= {'input': [1, 3, 640, 640]})
 
                 assert check, 'assert simplify check failed'
                 onnx.save(onnx_model, f)
             except Exception as e:
                 print(f'{prefix} simplifier failure: {e}')
 
-            session = ort.InferenceSession(f)
+            session = ort.InferenceSession(f, providers=["CPUExecutionProvider"])
 
             for ii in session.get_inputs():
                 print("input: ", ii)
@@ -243,8 +256,8 @@ if __name__ == '__main__':
         # Update model
         for k, m in model.named_modules():
             m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
-            if isinstance(m, models.common.Conv) and isinstance(m.act, MishCuda):
-                m.act = Mish()  # assign activation
+            # if isinstance(m, models.common.Conv) and isinstance(m.act, MishCuda):
+            #     m.act = Mish()  # assign activation
             if isinstance(m, models.common.Conv) and isinstance(m.act, nn.Hardswish):
                 m.act = Hardswish()  # assign activation
             if isinstance(m, models.common.BottleneckCSP) or isinstance(m, models.common.BottleneckCSP2) \
@@ -255,8 +268,8 @@ if __name__ == '__main__':
                     bn._buffers = m.bn._buffers
                     bn._non_persistent_buffers_set = set()
                     m.bn = bn
-                if isinstance(m.act, MishCuda):
-                    m.act = Mish()  # assign activation
+                # if isinstance(m.act, MishCuda):
+                #     m.act = Mish()  # assign activation
         #     # if isinstance(m, models.yolo.Detect):
         #     #     m.forward = m.forward_export  # assign forward (optional)
 

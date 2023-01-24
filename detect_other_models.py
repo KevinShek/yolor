@@ -60,7 +60,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         hide_labels=False,  # hide labels
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
-        library=None # for khadas
+        library=None, # for khadas
+        auto=True, # auto is for dynamic models but for static models turn this "False"
+        opencv_onnx=False 
         ):
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
@@ -79,6 +81,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '', '.weights']
     check_suffix(w, suffixes)  # check weights have acceptable suffix
     pt, onnx, tflite, pb, trt, khadas, saved_model, darknet  = (suffix == x for x in suffixes)  # backend booleans
+    if opencv_onnx:
+        onnx = False
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
     pt_jit = pt and 'torchscript' in w
     auto = False
@@ -100,12 +104,29 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     elif onnx:
         check_requirements(('onnx', 'onnxruntime'))
         import onnxruntime
-        session = onnxruntime.InferenceSession(w, None)
+        # session = onnxruntime.InferenceSession(w, None)
+        session = onnxruntime.InferenceSession(w)
         names = names
+    elif opencv_onnx:
+        # Load the model
+        model = cv2.dnn.readNet(w)
+        # Setting what processor to use the model
+        
+        if opt.device == "cpu":
+            # NPU
+            model.setPreferableBackend(cv2.dnn.DNN_BACKEND_TIMVX)
+            model.setPreferableTarget(cv2.dnn.DNN_TARGET_NPU)
+        else:
+            # CPU
+            model.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
+            model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+
+        # grabbing the output names
+        output_names = model.getUnconnectedOutLayersNames()
     elif trt:
         from trt_loader.trt_loader import TrtModel
         model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
-
     elif khadas:
         from ksnn.api import KSNN
         level = 0
@@ -155,10 +176,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         view_img = check_imshow()
         if not khadas:
             cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride)
+        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride, auto=auto)
         bs = len(dataset)  # batch_size
     else:
-        dataset = LoadImages(source, img_size=imgsz, auto_size=stride)
+        dataset = LoadImages(source, img_size=imgsz, auto_size=stride, auto=auto)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -168,7 +189,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
         if onnx:
-            img = img.numpy()
+            # img = img.numpy()
             img = img.astype('float32')
             # img = torch.from_numpy(img).to(device)
         elif trt:
@@ -188,7 +209,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             # img = img.to(device, non_blocking=True)
             img = torch.from_numpy(img).to(device)
             img = img.half() if half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if opencv_onnx:
+            img = cv2.dnn.blobFromImage(img, 1/255.0)
+        else:
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if len(img.shape) == 3:
             img = img[None]  # expand for batch dim
 
@@ -202,8 +226,13 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 pred = model(img, augment=augment)[0]
         elif onnx:
             pred = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+            # img size is normally dynamic allow for inputs such as 1,3,512,640 however if it is static model then turn off auto in the dataset so it will always give 1,3,640,640
+            # pred = torch.tensor(session.run(None, {session.get_inputs()[0].name: img}))
             if opt.device == "0": 
                 pred = pred.to(device)
+        elif opencv_onnx:
+            model.setInput(blob)
+            pred = model.forward(output_names)
         elif trt:
             pred = torch.tensor(model.run(img))
             if opt.device == "0": 
@@ -392,6 +421,8 @@ def parse_opt():
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
+    parser.add_argument('--auto', type=str, default=True, help='Turn this on if you using dynamic inputs but if you are using static inputs then turn this False')
+    parser.add_argument('--opencv_onnx', default=False, action='store_true', help='are ypu using opencv to load onnx models?')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     return opt

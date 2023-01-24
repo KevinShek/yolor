@@ -148,7 +148,7 @@ class _RepeatSampler(object):
 
 
 class LoadImages:  # for inference
-    def __init__(self, path, img_size=640, auto_size=64):
+    def __init__(self, path, img_size=640, auto_size=64, auto=True):
         p = str(Path(path))  # os-agnostic
         p = os.path.abspath(p)  # absolute path
         if '*' in p:
@@ -166,6 +166,7 @@ class LoadImages:  # for inference
 
         self.img_size = img_size
         self.auto_size = auto_size
+        self.auto = auto
         self.files = images + videos
         self.nf = ni + nv  # number of files
         self.video_flag = [False] * ni + [True] * nv
@@ -211,7 +212,7 @@ class LoadImages:  # for inference
             print('image %g/%g %s: ' % (self.count, self.nf, path), end='')
 
         # Padded resize
-        img = letterbox(img0, new_shape=self.img_size, auto_size=self.auto_size)[0]
+        img = letterbox(img0, new_shape=self.img_size, auto_size=self.auto_size, auto=self.auto)[0]
         # Convert
         # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
@@ -229,7 +230,7 @@ class LoadImages:  # for inference
 
 
 class LoadWebcam:  # for inference
-    def __init__(self, pipe='0', img_size=640):
+    def __init__(self, pipe='0', img_size=640, auto=True):
         self.img_size = img_size
 
         if pipe.isnumeric():
@@ -239,6 +240,7 @@ class LoadWebcam:  # for inference
         # pipe = 'http://wmccpinetop.axiscam.net/mjpg/video.mjpg'  # IP golf camera
 
         self.pipe = pipe
+        self.auto = auto
         self.cap = cv2.VideoCapture(pipe)  # video capture object
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # set buffer size
 
@@ -273,7 +275,7 @@ class LoadWebcam:  # for inference
         print('webcam %g: ' % self.count, end='')
 
         # Padded resize
-        img = letterbox(img0, new_shape=self.img_size)[0]
+        img = letterbox(img0, new_shape=self.img_size, auto=self.auto)[0]
 
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
@@ -286,9 +288,10 @@ class LoadWebcam:  # for inference
 
 
 class LoadStreams:  # multiple IP or RTSP cameras
-    def __init__(self, sources='streams.txt', img_size=640, khadas_camera=False):
+    def __init__(self, sources='streams.txt', img_size=640, khadas_camera=False, auto=True):
         self.mode = 'images'
         self.img_size = img_size
+        self.auto = auto
 
         if os.path.isfile(sources):
             with open(sources, 'r') as f:
@@ -319,7 +322,7 @@ class LoadStreams:  # multiple IP or RTSP cameras
         print('')  # newline
 
         # check for common shapes
-        s = np.stack([letterbox(x, new_shape=self.img_size)[0].shape for x in self.imgs], 0)  # inference shapes
+        s = np.stack([letterbox(x, new_shape=self.img_size, auto=self.auto)[0].shape for x in self.imgs], 0)  # inference shapes
         self.rect = np.unique(s, axis=0).shape[0] == 1  # rect inference if all shapes equal
         if not self.rect:
             print('WARNING: Different stream shapes detected. For optimal performance supply similarly-shaped streams.')

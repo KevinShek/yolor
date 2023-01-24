@@ -28,9 +28,10 @@ pandas
 
 # export --------------------------------------
 # coremltools>=4.1
-onnx>=1.9.0  # ONNX export
+onnx>=1.6.0  # ONNX export (v1.6 for vim3pro) https://github.com/onnx/onnx/blob/main/docs/Versioning.md
 onnx-simplifier>=0.3.6  # ONNX simplifier
 onnxruntime-gpu
+# onnx-graphsurgeon https://github.com/NVIDIA/TensorRT/tree/main/tools/onnx-graphsurgeon
 tensorflow>=2.4.1  # TFLite export
 tensorflowjs>=3.9.0  # TF.js export
 tflite-runtime

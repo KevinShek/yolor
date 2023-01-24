@@ -250,20 +250,20 @@ def wh_iou(wh1, wh2, eps=1e-7):
 
 def parsing_csv_for_coco():
     def parsing_csv(csv_path, classes):
-    parsed_datas = []
-    with open(csv_path, newline='') as csvfile:
-        rows = csv.reader(csvfile, delimiter=' ', quotechar='|')
-        for row in rows:
-            task, img_path, label, rxmin, rymin,_,_,rxmax,rymax,_,_ = row[0].split(",", -1)
-            if task == "TEST":
-                rbox = [float(rxmin), float(rymin), float(rxmax), float(rymax)]
-                class_id = classes.index(f"{label}")
-                parsed_data = {
-                    "img_path": img_path,
-                    "class_id": class_id,
-                    "bounding_box": rbox
-                }
-                parsed_datas.append(parsed_data)
+        parsed_datas = []
+        with open(csv_path, newline='') as csvfile:
+            rows = csv.reader(csvfile, delimiter=' ', quotechar='|')
+            for row in rows:
+                task, img_path, label, rxmin, rymin,_,_,rxmax,rymax,_,_ = row[0].split(",", -1)
+                if task == "TEST":
+                    rbox = [float(rxmin), float(rymin), float(rxmax), float(rymax)]
+                    class_id = classes.index(f"{label}")
+                    parsed_data = {
+                        "img_path": img_path,
+                        "class_id": class_id,
+                        "bounding_box": rbox
+                    }
+                    parsed_datas.append(parsed_data)
 
     return parsed_datas
 
