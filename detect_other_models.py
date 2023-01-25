@@ -1,4 +1,4 @@
-# YOLOv5 ðŸš€ by Ultralytics, GPL-3.0 license
+# YOLOv5 by Ultralytics, GPL-3.0 license
 """
 Run inference on images, videos, directories, streams, etc.
 
@@ -90,8 +90,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     list_of_images = []
     if khadas:
         opt.device = "cpu"
-    device = select_device(opt.device, batch_size=1)
-    if not khadas:
+    if not opencv_onnx:
+      device = select_device(opt.device, batch_size=1)
+    if not khadas and not opencv_onnx:
         half &= device.type != 'cpu'  # half precision only supported on CUDA
     if pt:
         model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -193,6 +194,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             # img = img.numpy()
             img = img.astype('float32')
             # img = torch.from_numpy(img).to(device)
+        elif opencv_onnx:
+            img = img.astype('uint8')
+            # print(img.shape, type(img), img.dtype)
+            # img = np.reshape(img, (640,640,3))
+            img = img.transpose((1, 2, 0)) # 640x640x3
+            # print(img.shape, type(img), img.dtype)
         elif trt:
             img = img.numpy()
             img = img.astype('float16')
@@ -211,7 +218,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             img = torch.from_numpy(img).to(device)
             img = img.half() if half else img.float()  # uint8 to fp16/32
         if opencv_onnx:
-            img = cv2.dnn.blobFromImage(img, 1/255.0)
+            img = cv2.dnn.blobFromImage(img, 1/255.0) # takes input such as 640x640x3
         else:
             img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if len(img.shape) == 3:
@@ -232,8 +239,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             if opt.device == "0": 
                 pred = pred.to(device)
         elif opencv_onnx:
-            model.setInput(blob)
-            pred = model.forward(output_names)
+            model.setInput(img)
+            pred = torch.tensor(model.forward(output_names))
         elif trt:
             pred = torch.tensor(model.run(img))
             if opt.device == "0": 
@@ -392,7 +399,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     if update:
         strip_optimizer(weights)  # update model (to fix SourceChangeWarning)
 
+    t = tuple(x / len(dataset) * 1E3 for x in (t1, t2, t1 + t2)) + (imgsz, imgsz, bs)  # tuple
     print(f'Done. ({time.time() - t0:.3f}s)')
+    with open(save_dir / 'information.txt', 'a') as f:
+        f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n\n')
 
 
 def parse_opt():
