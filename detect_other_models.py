@@ -405,10 +405,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     if update:
         strip_optimizer(weights)  # update model (to fix SourceChangeWarning)
 
-    t = tuple(x / len(dataset) * 1E3 for x in (t1_number, t2_number, t1_number + t2_number)) + (imgsz, imgsz, bs)  # tuple
+    t = tuple(x / len(dataset) * 1E3 for x in (t1_number, t2_number, t1_number + t2_number)) + (imgsz[0], imgsz[0], bs)  # tuple
+    t3 = tuple(x / len(dataset) * 1E3 for x in (t1, t2, t1 + t2)) + (imgsz[0], imgsz[0], bs)  # tuple
     print(f'Done. ({time.time() - t0:.3f}s)')
     with open(save_dir / 'information.txt', 'a') as f:
         f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n\n')
+        f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t3 + '\n\n')
 
 
 def parse_opt():
