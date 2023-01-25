@@ -82,6 +82,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     w = weights[0] if isinstance(weights, list) else weights
     classify, suffix, suffixes = False, Path(w).suffix.lower(), ['.pt', '.onnx', '.tflite', '.pb', '.trt', '.nb', '', '.weights']
     check_suffix(w, suffixes)  # check weights have acceptable suffix
+    t1_number, t2_number = 0., 0.
     pt, onnx, tflite, pb, trt, khadas, saved_model, darknet  = (suffix == x for x in suffixes)  # backend booleans
     if opencv_onnx:
         onnx = False
