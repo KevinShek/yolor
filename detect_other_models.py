@@ -115,13 +115,14 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         # Setting what processor to use the model
         
         if opt.device == "cpu":
-            # NPU
-            model.setPreferableBackend(cv2.dnn.DNN_BACKEND_TIMVX)
-            model.setPreferableTarget(cv2.dnn.DNN_TARGET_NPU)
-        else:
             # CPU
             model.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
             model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        else:
+            # NPU
+            model.setPreferableBackend(cv2.dnn.DNN_BACKEND_TIMVX)
+            model.setPreferableTarget(cv2.dnn.DNN_TARGET_NPU)
+
 
 
         # grabbing the output names
@@ -274,6 +275,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred[..., 3] *= imgsz[0]  # h
             pred = torch.tensor(pred)
 
+        t1_number += time_sync() - t1 
+        t1_5 = time_sync()
+
         # NMS
         if khadas: 
             from khadas_post_process.yolov4_process import yolov4_post_process, draw
@@ -283,6 +287,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
+        t2_number += time_sync() - t1_5
 
         # Second-stage classifier (optional)
         if classify:
@@ -399,7 +404,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     if update:
         strip_optimizer(weights)  # update model (to fix SourceChangeWarning)
 
-    t = tuple(x / len(dataset) * 1E3 for x in (t1, t2, t1 + t2)) + (imgsz, imgsz, bs)  # tuple
+    t = tuple(x / len(dataset) * 1E3 for x in (t1_number, t2_number, t1_number + t2_number)) + (imgsz, imgsz, bs)  # tuple
     print(f'Done. ({time.time() - t0:.3f}s)')
     with open(save_dir / 'information.txt', 'a') as f:
         f.write(('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g') % t + '\n\n')
