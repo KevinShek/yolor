@@ -95,7 +95,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, weights, opset=11, train=False, dynamic=False, simplify=True):
+def export_onnx(model, img, weights, opset=13, train=False, dynamic=False, simplify=True, remove_unwanted_output=False):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
@@ -104,7 +104,16 @@ def export_onnx(model, img, weights, opset=11, train=False, dynamic=False, simpl
         import onnx_graphsurgeon as gs
 
         print(f'\n{prefix} starting export with onnx {onnx.__version__}...')
-        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}_opset_{opset}_based_on_yolov5.onnx')  # filename
+        if dynamic:
+            dyn = "dynamic"
+        else:
+            dyn = "static"
+        if simplify:
+            sim = "sim"
+        else:
+            sim = "_"
+        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}_opset_{opset}_{dyn}_{sim}.onnx')  # filename
+
         # torch.onnx.export(model, img, f, verbose=False, opset_version=12, input_names=['images'],
         #                   output_names=['classes', 'boxes'] if y is None else ['output'])
                           # output_names=['output'])
@@ -147,26 +156,35 @@ def export_onnx(model, img, weights, opset=11, train=False, dynamic=False, simpl
         onnx.checker.check_model(model_onnx)  # check onnx model
         # print(onnx.helper.printable_graph(model_onnx.graph))  # print
 
-        print('Remove unused outputs')
+        unwant_output = []
+
+        # print('Remove unused outputs')
         onnx_module = shape_inference.infer_shapes(onnx.load(f))
-        while len(onnx_module.graph.output) != 1:
-            for output in onnx_module.graph.output:
-                if output.name != 'output':
-                    print('--> remove', output.name)
-                    onnx_module.graph.output.remove(output)
-        graph = gs.import_onnx(onnx_module)
-        graph.cleanup()
-        graph.toposort()
-        graph.fold_constants().cleanup()
-        onnx.save_model(gs.export_onnx(graph), f)
-        print('Convert successfull !')
+        # while len(onnx_module.graph.output) != 1:
+        for output in onnx_module.graph.output:
+            if output.name != 'output':
+                    unwant_output.append(str(output.name))
+        #             print('--> remove', output.name)
+        #             onnx_module.graph.output.remove(output)
+        # graph = gs.import_onnx(onnx_module)
+        # graph.cleanup()
+        # graph.toposort()
+        # graph.fold_constants().cleanup()
+        # onnx.save_model(gs.export_onnx(graph), f)
+        # print('Convert successfull !')
 
         # Simplify
         if simplify:
             try:
                 from onnxsim import simplify
 
-                onnx_model, check = simplify(model_onnx, check_n=3, input_shape= {'input': [1, 3, 640, 640]})
+                # onnx_model, check = simplify(model_onnx, check_n=3, input_shape= {'input': [1, 3, 640, 640]})
+                # static
+                # onnx_model, check = simplify(model_onnx, overwrite_input_shapes= {'input': [1, 3, opt.img_size[0], opt.img_size[1]]}, unused_output=[str(665), str(752), str(839)])
+                if remove_unwanted_output:
+                    onnx_model, check = simplify(model_onnx, overwrite_input_shapes= {'input': [1, 3, opt.img_size[0], opt.img_size[1]]}, unused_output=unwant_output)
+                else:
+                    onnx_model, check = simplify(model_onnx, overwrite_input_shapes= {'input': [1, 3, opt.img_size[0], opt.img_size[1]]})
 
                 assert check, 'assert simplify check failed'
                 onnx.save(onnx_model, f)

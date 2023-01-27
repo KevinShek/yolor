@@ -235,14 +235,16 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
                 pred = model(img, augment=augment)[0]
         elif onnx:
-            pred = torch.tensor(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+            pred = np.array(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
+            pred = torch.from_numpy(pred)
             # img size is normally dynamic allow for inputs such as 1,3,512,640 however if it is static input then turn off auto in the dataset so it will always give 1,3,640,640
             # pred = torch.tensor(session.run(None, {session.get_inputs()[0].name: img}))
             if opt.device == "0": 
                 pred = pred.to(device)
         elif opencv_onnx:
             model.setInput(img)
-            pred = torch.tensor(model.forward(output_names))
+            pred = np.array(model.forward(output_names))
+            pred = torch.from_numpy(pred)
         elif trt:
             pred = torch.tensor(model.run(img))
             if opt.device == "0": 
