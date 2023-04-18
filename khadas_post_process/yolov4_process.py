@@ -113,10 +113,10 @@ def process(input, mask, anchors, img_size):
     row = row.reshape(grid_h, grid_w, 1, 1).repeat(3, axis=-2)
     grid = np.concatenate((col, row), axis=-1)
 
-    box_xy += grid
-    box_xy /= (grid_w, grid_h)
-    box_wh /= (img_size[1], img_size[0])
-    box_xy -= (box_wh / 2.)
+    # box_xy += grid
+    # box_xy /= (grid_w, grid_h)
+    # box_wh /= (img_size[1], img_size[0])
+    # box_xy -= (box_wh / 2.)
     box = np.concatenate((box_xy, box_wh), axis=-1)
 
     return box, box_confidence, box_class_probs
@@ -129,8 +129,10 @@ def filter_boxes(boxes, box_confidences, box_class_probs, OBJ_THRESH):
     pos = np.where(box_class_scores >= OBJ_THRESH)
 
     boxes = boxes[pos]
-    classes = box_classes[pos]
-    scores = box_class_scores[pos]
+    # classes = box_classes[pos]
+    classes = box_class_probs[pos]
+    # scores = box_class_scores[pos]
+    scores = box_confidences[pos]
 
     return boxes, classes, scores
 
@@ -186,10 +188,32 @@ def yolov4_post_process(data, img_size, OBJ_THRESH=0.1, NMS_THRESH=0.6, MAX_BOXE
         boxes.append(b)
         classes.append(c)
         scores.append(s)
-
+    
     boxes = np.concatenate(boxes)
     classes = np.concatenate(classes)
     scores = np.concatenate(scores)
+    
+    # print(len(boxes))
+    # print(len(classes))
+    # print(scores[0][0])
+    # print(classes[0][0])
+    # print(len(scores))
+    
+    temp_list = []
+    for xi in range(len(boxes)):
+        # temp_array = [(boxes[xi][0] + boxes[xi][2]) / 2 * img_size[1], (boxes[xi][1] + boxes[xi][3]) / 2 * img_size[0] , (boxes[xi][2] - boxes[xi][0]) * img_size[1], (boxes[xi][3] - boxes[xi][1]) * img_size[0], scores[xi][0], classes[xi][0]] # [x center, y center, width, height, box_conf, box_cls_conf] eg [456, 123, 534, 234, 0.9, 0.54]
+        temp_array = [boxes[xi][0]* img_size[1], boxes[xi][1]* img_size[0], boxes[xi][2], boxes[xi][3], scores[xi][0], classes[xi][0]]
+        temp_list.append(temp_array)
+        
+    from operator import itemgetter
+    
+    sorts = sorted(temp_list, key=itemgetter(5), reverse=True)
+    
+    # print(f"{sorts[0]}")
+        
+    return np.array([[sorts]], dtype=np.float32) # [1,1,25200,6]
+
+
 
     # boxes = torch.from_numpy(boxes)
     # classes = torch.from_numpy(classes.astype(np.float64))

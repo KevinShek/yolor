@@ -211,6 +211,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             #if type(img) is np.array:
             #    print("hi")
             #    img = img.numpy()
+            img = img.transpose((1, 2, 0)) # 640x640x3
             img = img.astype('float32')  
         elif saved_model:
             img = img.numpy()
@@ -244,6 +245,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         elif opencv_onnx:
             model.setInput(img)
             pred = np.array(model.forward(output_names))
+            #print(pred)
+            #print(pred[0].shape[1])
+            #print(pred.shape)
             pred = torch.from_numpy(pred)
         elif trt:
             pred = torch.tensor(model.run(img))
@@ -251,11 +255,20 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 pred = pred.to(device)
         elif khadas:
             from ksnn.types import output_format
+            from khadas_post_process.yolov4_process import yolov4_post_process
             cv_img = list()
+            print(img.shape)
             resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
-            cv_img.append(resize_img)
+            cv_img.append(img)
             # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
-            pred = np.array([yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
+            pred = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
+            # img_size_orginal = im0s.shape[0:2]
+            resize_img_size = resize_img.shape[0:2]
+            pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            #print(pred[:5])
+            #print(pred[0].shape[1])
+            #print(pred.shape)
+            pred = torch.from_numpy(pred)
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -282,12 +295,12 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         t1_5 = time_sync()
 
         # NMS
-        if khadas: 
-            from khadas_post_process.yolov4_process import yolov4_post_process, draw
-            img_size_orginal = im0s.shape[0:2]
-            output = yolov4_post_process(pred, img_size=img_size_orginal, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
-        else:
-            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        # if khadas: 
+        #     from khadas_post_process.yolov4_process import yolov4_post_process, draw
+        #     img_size_orginal = im0s.shape[0:2]
+        #     output = yolov4_post_process(pred, img_size=img_size_orginal, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+        # else:
+        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
         t2_number += time_sync() - t1_5
@@ -310,37 +323,37 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, pil=not ascii)
-            if khadas:
-                if output is not None and len(output[0]) != 0:
-                    outputs = output[0].tolist()
-                    outputs = np.array(outputs)
-                    boxes = outputs[:, :4]
-                    scores = outputs[:,4]
-                    classes = outputs[:,5]
-                    classes_int = classes.astype(int)
+            # if khadas:
+            #     if output is not None and len(output[0]) != 0:
+            #         outputs = output[0].tolist()
+            #         outputs = np.array(outputs)
+            #         boxes = outputs[:, :4]
+            #         scores = outputs[:,4]
+            #         classes = outputs[:,5]
+            #         classes_int = classes.astype(int)
                     
-                    list_of_images = draw(resize_img, boxes, scores, classes_int)
+            #         list_of_images = draw(resize_img, boxes, scores, classes_int)
 
-                    if save_txt:
-                        for box, score, class_int in zip(boxes, scores, classes_int):
-                            line = (class_int, box, score) if save_conf else (class_int, box)  # label format
-                            with open(txt_path + '.txt', 'a') as f:
-                                f.write((f'{line}') + '\n')
-                    if save_img:
-                        for image_number in range(int(len(list_of_images)/3)):
-                            name_of_results = ["target", "target_location", "all_targets"]
-                            for value, data in enumerate(name_of_results):
-                                if not save_crop:
-                                    if value == 0 or value == 1:
-                                        continue
-                                    # else:
-                                        # image_number = 0
-                                image_name = f"{save_path}_{data}_{image_number}.jpg"
-                                image = list_of_images[value]
-                                if image is not None:
-                                    cv2.imwrite(image_name, image)
+            #         if save_txt:
+            #             for box, score, class_int in zip(boxes, scores, classes_int):
+            #                 line = (class_int, box, score) if save_conf else (class_int, box)  # label format
+            #                 with open(txt_path + '.txt', 'a') as f:
+            #                     f.write((f'{line}') + '\n')
+            #         if save_img:
+            #             for image_number in range(int(len(list_of_images)/3)):
+            #                 name_of_results = ["target", "target_location", "all_targets"]
+            #                 for value, data in enumerate(name_of_results):
+            #                     if not save_crop:
+            #                         if value == 0 or value == 1:
+            #                             continue
+            #                         # else:
+            #                             # image_number = 0
+            #                     image_name = f"{save_path}_{data}_{image_number}.jpg"
+            #                     image = list_of_images[value]
+            #                     if image is not None:
+            #                         cv2.imwrite(image_name, image)
 
-            elif len(det):
+            if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
@@ -370,13 +383,13 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             # Print time (inference + NMS)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
-            # Stream results
-            if khadas:
-                if len(list_of_images) > 0:
-                    number_of_set_of_images = len(list_of_images)
-                    im0 = list_of_images[number_of_set_of_images - 1]
-            else:
-                im0 = annotator.result()
+            # # Stream results
+            # if khadas:
+            #     if len(list_of_images) > 0:
+            #         number_of_set_of_images = len(list_of_images)
+            #         im0 = list_of_images[number_of_set_of_images - 1]
+            # else:
+            im0 = annotator.result()
             if view_img:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond

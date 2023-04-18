@@ -95,7 +95,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
         print(f'{prefix} export failure: {e}')
 
 
-def export_onnx(model, img, weights, opset=13, train=False, dynamic=False, simplify=True, remove_unwanted_output=False):
+def export_onnx(model, img, weights, opset=12, train=False, dynamic=False, simplify=True, remove_unwanted_output=True):
     # ONNX model export
     prefix = colorstr('ONNX:')
     try:
@@ -112,7 +112,11 @@ def export_onnx(model, img, weights, opset=13, train=False, dynamic=False, simpl
             sim = "sim"
         else:
             sim = "_"
-        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}_opset_{opset}_{dyn}_{sim}.onnx')  # filename
+        if remove_unwanted_output:
+            output = "output_only"
+        else:
+            output = "all_outputs"
+        f = opt.weights.replace('.pt', f'-{opt.img_size[0]}-{opt.img_size[1]}_opset_{opset}_{dyn}_{sim}_{output}.onnx')  # filename
 
         # torch.onnx.export(model, img, f, verbose=False, opset_version=12, input_names=['images'],
         #                   output_names=['classes', 'boxes'] if y is None else ['output'])

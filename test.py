@@ -277,7 +277,7 @@ def test(data,
             img = img.numpy()
             img = img.astype('float16')
         elif khadas:
-            img = img.numpy()
+            img = img.transpose((1, 2, 0)) # 640x640x3
             img = img.astype('float32')  
         elif saved_model:
             img = img.numpy()
@@ -310,11 +310,19 @@ def test(data,
                     inf_out = inf_out.to(device)
             elif khadas:
                 from ksnn.types import output_format
-                cv_img_path = "/projects" + self.img_files[index].strip("..")
-                cv_img = cv2.imread(cv_img_path, cv2.IMREAD_COLOR)
-                cv_img = cv.resize(cv_img, (imgsz, imgsz))
+                from khadas_post_process.yolov4_process import yolov4_post_process
+                cv_img = list()
+                print(img.shape)
+                resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+                cv_img.append(img)
                 # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
-                inf_out = np.array([yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)])
+                pred = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
+                resize_img_size = resize_img.shape[0:2]
+                pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+                #print(pred[:5])
+                #print(pred[0].shape[1])
+                #print(pred.shape)
+                pred = torch.from_numpy(pred)
             elif pb or saved_model:
 
                 inf_out = model(**{'input': img})
@@ -341,11 +349,7 @@ def test(data,
 
             # Run NMS
             t = time_synchronized()
-            if khadas: 
-                from khadas_post_process.yolov4_process import yolov4_post_process
-                output = yolov4_post_process(inf_out, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres)
-            else:
-                output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
+            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
             t1 += time_synchronized() - t  
 
         # Statistics per image
