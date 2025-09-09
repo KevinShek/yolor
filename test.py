@@ -49,6 +49,7 @@ def test(data,
          dataloader=None,
          save_dir=Path(''),  # for saving images
          save_txt=False,  # for auto-labelling
+        save_image=False, # for saving labelled images,
          save_conf=False,
          plots=True,
          log_imgs=0):  # number of logged images
@@ -66,6 +67,10 @@ def test(data,
         # Directories
         save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+
+        if save_image:
+            save_dir_image = Path(increment_path(Path(opt.project) / opt.name / "pred_images", exist_ok=opt.exist_ok))  # increment run
+            (save_dir_image).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
         model = Darknet(opt.cfg).to(device)
@@ -92,6 +97,7 @@ def test(data,
     check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
+    # iouv = torch.linspace(0.0, 0.0, 1).to(device)  # iou for above 0 
     niou = iouv.numel()
 
     # Logging
@@ -170,7 +176,7 @@ def test(data,
             if plots and len(wandb_images) < log_imgs:
                 box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
                              "class_id": int(cls),
-                             "box_caption": "%s %.3f" % (names[cls], conf),
+                             "box_caption": "%s %.3f" % (names[int(cls)], conf),
                              "scores": {"class_score": conf},
                              "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
                 boxes = {"predictions": {"box_data": box_data, "class_labels": names}}
@@ -232,6 +238,14 @@ def test(data,
             plot_images(img, targets, paths, f, names)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
             plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
+        
+        if save_image:
+            # o_img = cv2.imread(paths[0])  # BGR
+            # # rgb_img = o_img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB
+            # img0 = o_img.transpose(2, 0, 1)
+            # img0 = img0[None] # makes a batch dim of 1 example (channel, height, width) to (batch dim, channel, height, width)
+            f = save_dir_image / f'test_batch{batch_i}_pred.jpg'
+            plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -240,7 +254,7 @@ def test(data,
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=False, fname=save_dir / 'precision-recall_curve.png')
         else:
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
-        p, r, ap50, ap = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1)  # [P, R, AP@0.5, AP@0.5:0.95]
+        p, r, ap50, ap, f1 = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1), f1.mean()  # [P, R, AP@0.5, AP@0.5:0.95]
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
         nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
     else:
@@ -253,18 +267,18 @@ def test(data,
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
     # Print results
-    pf = '%20s' + '%12.3g' * 6  # print format
-    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+    pf = '%20s' + '%12.3g' * 7  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map, f1))
 
     # Print results per class
     if verbose and len(stats):
         with open(save_dir / 'information.txt', 'a') as f:
-            f.write(('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95') + '\n')
-            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map) + '\n')
+            f.write(('%20s' + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95', 'f1') + '\n')
+            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map, f1) + '\n')
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i], f1))
             with open(save_dir / 'information.txt', 'a') as f:
-                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]) + '\n')
+                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i], f1) + '\n')
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
@@ -322,6 +336,7 @@ if __name__ == '__main__':
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save_img', action='store_true', help='save image to as jpeg')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--project', default='runs/test', help='save to project/name')
@@ -346,6 +361,7 @@ if __name__ == '__main__':
              opt.augment,
              opt.verbose,
              save_txt=opt.save_txt,
+             save_image=opt.save_img,
              save_conf=opt.save_conf,
              )
 
