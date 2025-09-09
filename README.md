@@ -12,7 +12,7 @@ python detect_other_models_all.py --weights ../weights/pytorch/yolov4-csp-640.pt
 ## Generic Inference
 
 ```
-python3 detect_other_models_all.py --weights ../weights/yolov4-csp-all-environment-640/yolov4-csp-all-environment-640.nb --source 0 --imgsz 640 --conf-thres 0.37 --iou-thres 0.3 --max-det 300 --library ../weights/yolov4-csp-all-environment-640/libnn_yolov4-csp-all-environment-640.so --save-txt
+python detect_other_models_all.py --weights ../weights/yolov4-csp-all-environment-640/yolov4-csp-all-environment-640.nb --source 0 --imgsz 640 --conf-thres 0.37 --iou-thres 0.3 --max-det 300 --library ../weights/yolov4-csp-all-environment-640/libnn_yolov4-csp-all-environment-640.so --save-txt
 ```
 
 ## Citation
