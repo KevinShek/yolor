@@ -257,7 +257,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 pred = pred.to(device)
         elif khadas:
             from ksnn.types import output_format
-            from khadas_post_process.yolov4_process import yolov4_post_process
+            from khadas_post_process.yolov4_process_all import yolov4_post_process
             cv_img = list()
             print(img.shape)
             resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
@@ -266,11 +266,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
             # img_size_orginal = im0s.shape[0:2]
             resize_img_size = resize_img.shape[0:2]
-            pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            # pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
             #print(pred[:5])
             #print(pred[0].shape[1])
             #print(pred.shape)
-            pred = torch.from_numpy(pred)
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -297,12 +296,14 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         t1_5 = time_sync()
 
         # NMS
-        # if khadas: 
-        #     from khadas_post_process.yolov4_process import yolov4_post_process, draw
-        #     img_size_orginal = im0s.shape[0:2]
-        #     output = yolov4_post_process(pred, img_size=img_size_orginal, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
-        # else:
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        if khadas: 
+            from khadas_post_process.yolov4_process_all import yolov4_post_process
+            # img_size_orginal = im0s.shape[0:2]
+            resize_img_size = resize_img.shape[0:2]
+            pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            # pred = torch.from_numpy(pred)
+        else:
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
         t2_number += time_sync() - t1_5

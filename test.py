@@ -44,6 +44,7 @@ def test(data,
          imgsz=640,
          conf_thres=0.001,
          iou_thres=0.6,  # for NMS
+         max_det=300,  # maximum detections per image
          save_json=False,
          single_cls=False,
          augment=False,
@@ -74,7 +75,6 @@ def test(data,
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         if save_image:
-            print("hi")
             save_dir_image = Path(increment_path(Path(opt.project) / opt.name / "images", exist_ok=opt.exist_ok))  # increment run
             (save_dir_image).mkdir(parents=True, exist_ok=True)  # make dir
 
@@ -211,6 +211,7 @@ def test(data,
     if pt or darknet:
         # Half
         half = device.type != 'cpu'  # half precision only supported on CUDA
+        # half = False
         if half:
             model.half()
     else:
@@ -225,6 +226,8 @@ def test(data,
     # check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, int(np.round((0.95 - 0.5) / .05)) + 1).to(device)  # iou vector for mAP@0.5:0.95
+    # iouv = torch.linspace(0.0, 1, int(np.round((1 - 0) / .1)) + 1).to(device)  # iou vector for mAP@0:1
+    # iouv = torch.linspace(0.0, 1, 1).to(device)  # iou vector for mAP@0:1
     niou = iouv.numel()
 
     # Logging
@@ -256,6 +259,7 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+    counter = 0
     if save_json and coco_id_conversion:
         from globox import AnnotationSet # https://github.com/laclouis5/globox
         anno_json = Path("..", "datasets", "heridal", "testImages", "labels", "labels.json")  # annotations json
@@ -277,7 +281,8 @@ def test(data,
             img = img.numpy()
             img = img.astype('float16')
         elif khadas:
-            img = img.transpose((1, 2, 0)) # 640x640x3
+            img = img.numpy()
+            img = img.transpose((0, 2, 3, 1)) # 1x640x640x3
             img = img.astype('float32')  
         elif saved_model:
             img = img.numpy()
@@ -312,17 +317,18 @@ def test(data,
                 from ksnn.types import output_format
                 from khadas_post_process.yolov4_process import yolov4_post_process
                 cv_img = list()
-                print(img.shape)
-                resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+                # print(img.shape)
                 cv_img.append(img)
                 # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
-                pred = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
-                resize_img_size = resize_img.shape[0:2]
-                pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+                inf_out = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
+                resize_img_size = img.shape[1:3]
+                inf_out = yolov4_post_process(inf_out, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
                 #print(pred[:5])
                 #print(pred[0].shape[1])
-                #print(pred.shape)
-                pred = torch.from_numpy(pred)
+                #print(inf_out.shape)
+                #print(inf_out)
+                # if inf_out output nothing it breaks the testing
+                inf_out = torch.from_numpy(inf_out)
             elif pb or saved_model:
 
                 inf_out = model(**{'input': img})
@@ -358,6 +364,9 @@ def test(data,
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
             seen += 1
+
+            if khadas:
+                img = img.transpose((0, 3, 1, 2)) # 1x3x640x640
 
             if len(pred) == 0:
                 if nl:
@@ -441,6 +450,8 @@ def test(data,
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
+            if khadas:
+              img = img.transpose((0, 3, 1, 2)) # 1x3x640x640
             plot_images(img, targets, paths, f, names, max_size=imgsz)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
             plot_images(img, output_to_target(output, width, height), paths, f, names, max_size=imgsz)  # predictions
@@ -454,17 +465,25 @@ def test(data,
             plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
 
     # Compute statistics
-    new_stats = np.array(stats)
+    # print(stats)
+    # new_stats = np.array(stats)
     # print(new_stats.shape)
+    # print(new_stats)
+    
+    # print(stats[0][:5])
 
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+    
+    # print(len(stats[0]), len(stats[1]), len(stats[2]), len(stats[3]))
+    # print(stats[0][:5], stats[1][:5], stats[2][:5], stats[3][:5])
+
     # print(stats)
     if len(stats) and stats[0].any():
         if nano:
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=False, fname=save_dir / 'precision-recall_curve.png')
         else:            
             p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, fname=save_dir / 'precision-recall_curve.png')
-        p, r, ap50, ap = p[:, 0], r[:, 0], ap[:, 0], ap.mean(1)  # [P, R, AP@0.5, AP@0.5:0.95]
+        p, r, ap50, ap, f1= p[:, 0], r[:, 0], ap[:, 0], ap.mean(1), f1.mean()  # [P, R, AP@0.5, AP@0.5:0.95]
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean() # calculate the mean for all classes
         nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
     else:
@@ -480,18 +499,18 @@ def test(data,
         wandb.log({"Validation": [wandb.Image(str(x), caption=x.name) for x in sorted(save_dir.glob('test*.jpg'))]})
 
     # Print results
-    pf = '%20s' + '%12.3g' * 6  # print format
-    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+    pf = '%20s' + '%12.3g' * 7  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map, f1))
 
     # Print results per class
     if verbose and len(stats):
         with open(save_dir / 'information.txt', 'a') as f:
-            f.write(('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95') + '\n')
-            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map) + '\n')
+            f.write(('%20s' + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95', 'f1') + '\n')
+            f.write((pf) % ('all', seen, nt.sum(), mp, mr, map50, map, f1) + '\n')
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i], f1))
             with open(save_dir / 'information.txt', 'a') as f:
-                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]) + '\n')
+                f.write((pf) % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i], f1) + '\n')
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
@@ -502,6 +521,7 @@ def test(data,
 
     # Save JSON
     if save_json and len(jdict):
+        import json
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
         if is_coco:
             anno_json = glob.glob('../coco/annotations/instances_val*.json')[0]  # annotations json
@@ -569,6 +589,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=1280, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
+    parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help="'val', 'test', 'study'")
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
@@ -598,6 +619,7 @@ if __name__ == '__main__':
              opt.img_size,
              opt.conf_thres,
              opt.iou_thres,
+             opt.max_det,
              opt.save_json,
              opt.single_cls,
              opt.augment,
