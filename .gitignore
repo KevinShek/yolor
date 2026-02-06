@@ -8,3 +8,5 @@ evolve.png
 evolve.txt
 wandb
 .vscode
+data/human.yaml
+khadas_post_process/results/
