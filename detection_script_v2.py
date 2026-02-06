@@ -127,7 +127,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         output_names = model.getUnconnectedOutLayersNames()
     elif trt:
         from trt_loader.trt_loader import TrtModel
-        model = TrtModel(w, imgsz, total_classes=len(load_classes(opt.names)))
+        model = TrtModel(w, imgsz, total_classes=len(opt.names))
     elif khadas:
         from ksnn.api import KSNN
         level = 0
@@ -249,9 +249,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         elif opencv_onnx:
             model.setInput(img)
             pred = np.array(model.forward(output_names))
-            #print(pred)
-            #print(pred[0].shape[1])
-            #print(pred.shape)
             pred = torch.from_numpy(pred)
         elif trt:
             pred = torch.tensor(model.run(img))
@@ -260,15 +257,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         elif khadas:
             from ksnn.types import output_format
             cv_img = [img[0]]
-            # print(img[0].shape)
-            # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
             pred = [yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
-            # img_size_orginal = im0s.shape[0:2]
             resize_img_size = resize_img.shape[0:2]
-            # pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
-            #print(pred[:5])
-            #print(pred[0].shape[1])
-            #print(pred.shape)
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -302,7 +292,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
         else:
             pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
-        # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
         t2 = time_sync()
         t2_number += time_sync() - t1_5
 
@@ -362,6 +351,14 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                         annotator.box_label(xyxy, label, color=colors(c, True))
                         if save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+
+                # if connection:
+                print(f"\033[1;32m{len(det)} Possible Target Detected \033[1;37;40m")
+                
+                with open(save_dir / f'operation_{date_time.day}_{date_time.month}_{date_time.year}_{date_time.hour}_{date_time.minute}_{date_time.second}.txt', 'a') as f:
+                    new_date_time = datetime.datetime.now()
+                    f.write(("Time:  %s:%s:%s") % (new_date_time.hour, new_date_time.minute, new_date_time.second) + ' - ')
+                    f.write(f"{len(det)} Possible Target Detected saved under the name {frame} \n")
 
             # Print time (inference + NMS)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
