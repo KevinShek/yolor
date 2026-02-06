@@ -66,7 +66,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         ):
     if not auto:
         auto = False
-    save_img = True #not nosave and not source.endswith('.txt')  # save inference images
+    save_img = True # not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://', 'https://'))
 
@@ -212,7 +212,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             #    print("hi")
             #    img = img.numpy()
             img = img.transpose((1, 2, 0)) # 640x640x3
-            img = img.astype('float32')  
+            img = img.astype('float32')
         elif saved_model:
             img = img.numpy()
             img = img.astype('float32') # it is expecting a float 32 argument
@@ -224,7 +224,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             img = cv2.dnn.blobFromImage(img, 1/255.0) # takes input such as 640x640x3
         else:
             img /= 255.0  # 0 - 255 to 0.0 - 1.0
-        if len(img.shape) == 3:
+        if len(img.shape) == 3 and not khadas:
             img = img[None]  # expand for batch dim
 
         # Inference
@@ -235,8 +235,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             else:
                 # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
                 pred = model(img, augment=augment)[0]
-
-            print(pred)
         elif onnx:
             pred = np.array(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
             pred = torch.from_numpy(pred)
@@ -266,7 +264,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = [yolo.nn_inference(img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
             # img_size_orginal = im0s.shape[0:2]
             resize_img_size = resize_img.shape[0:2]
-            pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            pred = yolov4_post_process(pred, img_size=imgsz, OBJ_THRESH=0.1, NMS_THRESH=0.1, MAX_BOXES=max_det)
             #print(pred[:5])
             #print(pred[0].shape[1])
             #print(pred.shape)
@@ -317,8 +315,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
-
+                
             if khadas:
+                img = img[None]  # expand for batch dim
                 img = img.transpose((0, 3, 1, 2)) # 1x3x640x640
 
             p = Path(p)  # to Path
@@ -361,6 +360,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+                # print(det)
 
                 # Print results
                 for c in det[:, -1].unique():
