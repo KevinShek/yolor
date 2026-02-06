@@ -60,6 +60,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, fname='precision-re
 
     # Sort by objectness
     i = np.argsort(-conf)
+    # print(conf[-5:])
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
     # Find unique classes
@@ -103,7 +104,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, fname='precision-re
 
     # Compute F1 score (harmonic mean of precision and recall)
     f1 = 2 * p * r / (p + r + 1e-16)
-    # print(len(f1[0]))
+    print(r)
+    print(len(r[0]))
+    print(r[0])
     # print(len(p[0]))
     # print(len(r[0]))
     if plot:

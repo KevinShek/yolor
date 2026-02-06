@@ -66,7 +66,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         ):
     if not auto:
         auto = False
-    save_img = not nosave and not source.endswith('.txt')  # save inference images
+    save_img = True #not nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://', 'https://'))
 
@@ -235,6 +235,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             else:
                 # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
                 pred = model(img, augment=augment)[0]
+
+            print(pred)
         elif onnx:
             pred = np.array(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
             pred = torch.from_numpy(pred)
@@ -316,6 +318,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
 
+            if khadas:
+                img = img.transpose((0, 3, 1, 2)) # 1x3x640x640
+
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # img.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
@@ -395,7 +400,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
-            if save_img and not khadas:
+            if save_img:
                 if dataset.mode == 'images':
                     cv2.imwrite(save_path, im0)
                 else:  # 'video' or 'stream'
