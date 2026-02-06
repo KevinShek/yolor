@@ -123,6 +123,10 @@ def process(input_layer, mask, anchors, img_size, xy_scale):
     box_xy = (box_xy + grid) * [stride_w, stride_h]
     box_wh = np.exp(box_wh) * layer_anchors
 
+<<<<<<< HEAD
+=======
+    # Add these two lines to fix the "Giant Box" issue
+>>>>>>> 13864ca8a79535ab21616a3cd7e422f1214bec06
     box_xy /= img_size  # Normalizes to 0.0 - 1.0
     box_wh /= img_size  # Normalizes to 0.0 - 1.0
 
@@ -136,9 +140,12 @@ def process(input_layer, mask, anchors, img_size, xy_scale):
     
 
 def filter_boxes(boxes, box_confidences, box_class_probs, OBJ_THRESH):
+<<<<<<< HEAD
     raw_scores = box_confidences * box_class_probs
     max_scores = np.max(raw_scores, axis=-1)
     print("Top 10 raw scores:", sorted(max_scores[max_scores > 0.1], reverse=True)[:10])
+=======
+>>>>>>> 13864ca8a79535ab21616a3cd7e422f1214bec06
     box_scores = box_confidences * box_class_probs
     box_classes = np.argmax(box_scores, axis=-1)
     box_class_scores = np.max(box_scores, axis=-1)

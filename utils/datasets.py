@@ -10,6 +10,7 @@ from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from threading import Thread
+import copy
 
 import cv2
 import numpy as np
@@ -27,6 +28,10 @@ from torchvision.ops import roi_pool, roi_align, ps_roi_pool, ps_roi_align
 from utils.general import xyxy2xywh, xywh2xyxy
 from utils.torch_utils import torch_distributed_zero_first
 from utils.augmentations import augment_hsv, copy_paste, letterbox, mixup, random_perspective
+
+from utils.khadas_camera_parameters.config_camera import Settings
+from utils.undistorted_image import undistort_camera
+
 
 # Parameters
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -232,6 +237,7 @@ class LoadImages:  # for inference
 class LoadWebcam:  # for inference
     def __init__(self, pipe='0', img_size=640, auto=True):
         self.img_size = img_size
+        self.config = Settings
 
         if pipe.isnumeric():
             pipe = eval(pipe)  # local camera
@@ -243,7 +249,18 @@ class LoadWebcam:  # for inference
         self.auto = auto
         self.cap = cv2.VideoCapture(pipe)  # video capture object
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # set buffer size
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config.width))  # setting the width
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config.height)) # setting the height
 
+        if  self.cap.isOpened() == False:
+            print("camera port is inactive")
+        else:
+            print("camera port is active")
+            
+        print("Camera Ready")
+        if self.config.ready_check:
+            input("Are you Ready?")    
+            
     def __iter__(self):
         self.count = -1
         return self
@@ -256,18 +273,34 @@ class LoadWebcam:  # for inference
             raise StopIteration
 
         # Read frame
-        if self.pipe == 0:  # local camera
-            ret_val, img0 = self.cap.read()
-            img0 = cv2.flip(img0, 1)  # flip left-right
-        else:  # IP camera
-            n = 0
-            while True:
-                n += 1
-                self.cap.grab()
-                if n % 30 == 0:  # skip frames
-                    ret_val, img0 = self.cap.retrieve()
-                    if ret_val:
-                        break
+        ret_val, img0 = self.cap.read()
+        # print(im0.shape)
+        if self.config.cali:
+            if self.config.flip_image:
+                img0 = cv2.flip(img0, 1)  # flip left-right
+            if self.config.distorted_camera:
+  		          img0 = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, img0) # undistort the frame
+            if self.config.angle.lower() == "counterclockwise":
+  		          img0 = cv2.rotate(img0, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            elif self.config.angle.lower() == "clockwise":
+  		          img0 = cv2.rotate(img0, cv2.ROTATE_90_CLOCKWISE)
+            elif self.config.angle.lower() == "upsidedown":
+  		          img0 = cv2.rotate(img0, cv2.ROTATE_180)
+        else:
+	          img0 = None 
+                     
+        # if self.pipe == 0:  # local camera
+        #    ret_val, img0 = self.cap.read()
+        #    img0 = cv2.flip(img0, 1)  # flip left-right
+        #else:  # IP camera
+        #    n = 0
+        #    while True:
+        #        n += 1
+        #        self.cap.grab()
+        #        if n % 30 == 0:  # skip frames
+        #            ret_val, img0 = self.cap.retrieve()
+        #            if ret_val:
+        #                break
 
         # Print
         assert ret_val, 'Camera Error %s' % self.pipe
@@ -292,6 +325,8 @@ class LoadStreams:  # multiple IP or RTSP cameras
         self.mode = 'images'
         self.img_size = img_size
         self.auto = auto
+        self.config = Settings()
+        self.khadas_camera = khadas_camera
 
         if os.path.isfile(sources):
             with open(sources, 'r') as f:
@@ -307,17 +342,40 @@ class LoadStreams:  # multiple IP or RTSP cameras
             print('%g/%g: %s... ' % (i + 1, n, s), end='')
             cap = cv2.VideoCapture(eval(s) if s.isnumeric() else s)
             assert cap.isOpened(), 'Failed to open %s' % s
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = cap.get(cv2.CAP_PROP_FPS) % 100
-            if khadas_camera:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # set buffer size
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config.width))  # setting the width
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config.height)) # setting the height
+            
+            # w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            # h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS) % 100  
+            
+            print("Camera Ready")
+            if self.config.ready_check:
+                input("Are you Ready?")  
+
+            if self.khadas_camera:
                 _, im0 = cap.read()  # guarantee first frame
-                im0 = cv2.flip(im0, 1)  # flip left-right
-                self.imgs[i] = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, im0) # undistort the frame
+                #print(im0.shape)
+                #if self.config.cali:
+                    #if self.config.flip_image:
+                    #    im0 = cv2.flip(im0, 1)  # flip left-right
+                    #if self.config.distorted_camera:
+          		      #    im0 = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, im0) # undistort the frame
+                    #if self.config.angle.lower() == "counterclockwise":
+          		      #    im0 = cv2.rotate(im0, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                    #elif self.config.angle.lower() == "clockwise":
+          		      #    im0 = cv2.rotate(im0, cv2.ROTATE_90_CLOCKWISE)
+                    #elif self.config.angle.lower() == "upsidedown":
+          		      #    im0 = cv2.rotate(im0, cv2.ROTATE_180)
+                self.imgs[i] = im0
+                # im0 = cv2.flip(im0, 1)  # flip left-right
+                # self.imgs[i] = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, im0) # undistort the frame
             else:
                 _, self.imgs[i] = cap.read()  # guarantee first frame
             thread = Thread(target=self.update, args=([i, cap]), daemon=True)
-            print(' success (%gx%g at %.2f FPS).' % (w, h, fps))
+            
+            print(' success (%gx%g at %.2f FPS).' % (self.config.width, self.config.height, fps))
             thread.start()
         print('')  # newline
 
@@ -335,7 +393,8 @@ class LoadStreams:  # multiple IP or RTSP cameras
             # _, self.imgs[index] = cap.read()
             cap.grab()
             if n == 4:  # read every 4th frame
-                _, self.imgs[index] = cap.retrieve()
+                _, im0 = cap.retrieve()
+                self.imgs[index] = im0
                 n = 0
             time.sleep(0.01)  # wait time
 
@@ -344,21 +403,39 @@ class LoadStreams:  # multiple IP or RTSP cameras
         return self
 
     def __next__(self):
-        self.count += 1
-        img0 = self.imgs.copy()
+        self.count += 1   
+        # print(img1.shape)
         if cv2.waitKey(1) == ord('q'):  # q to quit
             cv2.destroyAllWindows()
             raise StopIteration
-
-        # Letterbox
-        img = [letterbox(x, new_shape=self.img_size, auto=self.rect)[0] for x in img0]
-
-        # Stack
-        img = np.stack(img, 0)
-
-        # Convert
-        img = img[:, :, :, ::-1].transpose(0, 3, 1, 2)  # BGR to RGB, to bsx3x416x416
-        img = np.ascontiguousarray(img)
+        
+        if self.khadas_camera:
+            img0 = np.copy(self.imgs[0])
+            img = np.copy(self.imgs[0])
+            if self.config.cali:
+                if self.config.flip_image:
+                    img = cv2.flip(img, 1)  # flip left-right
+                if self.config.distorted_camera:
+      		          img = undistort_camera(self.config.mtx.param, self.config.dist.param, self.config.rvecs.param, self.config.tvecs.param, img) # undistort the frame
+                if self.config.angle.lower() == "counterclockwise":
+      		          img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                elif self.config.angle.lower() == "clockwise":
+      		          img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                elif self.config.angle.lower() == "upsidedown":
+      		          img = cv2.rotate(img, cv2.ROTATE_180)
+                              
+        else:
+            img0 = self.imgs.copy()
+            
+            # Letterbox
+            img = [letterbox(x, new_shape=self.img_size, auto=self.auto)[0] for x in img0]
+    
+            # Stack
+            img = np.stack(img, 0)
+    
+            # Convert
+            img = img[:, :, :, ::-1].transpose(0, 3, 1, 2)  # BGR to RGB, to bsx3x416x416
+            img = np.ascontiguousarray(img)
 
         return self.sources, img, img0, None
 

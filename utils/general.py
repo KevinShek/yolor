@@ -293,7 +293,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
 
     nc = prediction[0].shape[1] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
-
+    
     # Settings
     min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
     max_det = 300  # maximum number of detections per image
@@ -308,8 +308,10 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
 
+
         # If none remain process next image
         if not x.shape[0]:
+            #print(f"{xi} at 1")
             continue
 
         # Compute conf
@@ -337,6 +339,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # If none remain process next image
         n = x.shape[0]  # number of boxes
         if not n:
+            #print(f"{xi} at 2")
             continue
 
         # Sort by confidence
