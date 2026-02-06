@@ -9,7 +9,6 @@ Usage:
 import argparse
 import sys
 import time
-import datetime
 from pathlib import Path
 
 # This call to matplotlib.use() has no effect because the backend has already
@@ -17,6 +16,9 @@ from pathlib import Path
 # or matplotlib.backends is imported for the first time.
 import matplotlib
 matplotlib.use('Agg')  # for writing to files only
+
+import datetime
+# from connection_check import connection_checking
 
 import cv2
 import numpy as np
@@ -33,6 +35,11 @@ from utils.general import check_img_size, check_imshow, check_requirements, chec
     save_one_box
 from utils.plots import Annotator, colors
 from utils.torch_utils import select_device, load_classifier, time_sync
+
+# for khadas_camera_to_undistort it
+class MyClass():
+    def __init__(self, param):
+        self.param = param
 
 
 @torch.no_grad()
@@ -61,7 +68,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
         library=None, # for khadas
-        auto=True, # auto is for dynamic models but for static models turn this "False"
+        auto=False, # auto is for dynamic models but for static models turn this "False"
         opencv_onnx=False 
         ):
     if not auto:
@@ -76,6 +83,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
     # Initialize
     set_logging()
+    # connection = True
     # device = select_device(device)
 
     # Load model
@@ -88,6 +96,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         onnx = False
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
     pt_jit = pt and 'torchscript' in w
+    list_of_images = []
     if khadas:
         opt.device = "cpu"
     if not opencv_onnx:
@@ -111,7 +120,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         names = names
     elif opencv_onnx:
         # Load the model
-        model = cv2.dnn.readNet(w)
         model = cv2.dnn.readNet(w, "cfg/yolov4-csp-herdial.cfg","darknet")
         # Setting what processor to use the model
         
@@ -123,6 +131,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             # NPU
             model.setPreferableBackend(cv2.dnn.DNN_BACKEND_TIMVX)
             model.setPreferableTarget(cv2.dnn.DNN_TARGET_NPU)
+
+
+
         # grabbing the output names
         output_names = model.getUnconnectedOutLayersNames()
     elif trt:
@@ -174,16 +185,17 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
     # Dataloader
     if webcam:
-        view_img = check_imshow()
+        # view_img = check_imshow()
         if not khadas:
             cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride, auto=auto)
+        dataset = LoadStreams(source, img_size=imgsz, khadas_camera=khadas, auto=auto)
+        # dataset = LoadWebcam(source, img_size=imgsz, auto=auto)
         bs = len(dataset)  # batch_size
     else:
         dataset = LoadImages(source, img_size=imgsz, auto_size=stride, auto=auto)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
-
+    
     date_time = datetime.datetime.now()
     date = "%s/%s/%s" % (date_time.day, date_time.month, date_time.year)
     current_time = "%s:%s:%s" % (date_time.hour, date_time.minute, date_time.second)
@@ -196,6 +208,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         model(torch.zeros(1, 3, *imgsz).to(device).type_as(next(model.parameters())))  # run once
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
+        # cv2.imshow("video", im0s)
+        # cv2.imshow("editted", img)
+        # cv2.waitKey(0)
+    
         if onnx:
             # img = img.numpy()
             img = img.astype('float32')
@@ -209,10 +225,22 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         elif trt:
             img = img.numpy()
             img = img.astype('float16')
-        elif khadas:
-            resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
-            # img = resize_img.astype(np.float32)
-            # img = img.transpose((2, 0, 1)) # 640x640x3
+        if khadas:
+            if webcam:
+                img = img
+            else:
+            #print(img.shape)
+            #print(type(img))
+            #if type(img) is np.array:
+            #    print("hi")
+            #    img = img.numpy()
+                if len(img.shape) == 4:
+                    img = img.transpose((0, 2, 3, 1)) # 1x640x640x3
+                else:
+                    img = img.transpose((1, 2, 0)) # 640x640x3
+                    
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                # img = img.astype('float32')  
         elif saved_model:
             img = img.numpy()
             img = img.astype('float32') # it is expecting a float 32 argument
@@ -223,7 +251,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         if opencv_onnx:
             img = cv2.dnn.blobFromImage(img, 1/255.0) # takes input such as 640x640x3
         elif khadas:
-            img = resize_img
+            img = img
         else:
             img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if len(img.shape) == 3:
@@ -238,7 +266,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
                 pred = model(img, augment=augment)[0]
 
-            print(pred)
+            # print(pred)
         elif onnx:
             pred = np.array(session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: img}))
             pred = torch.from_numpy(pred)
@@ -259,16 +287,29 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 pred = pred.to(device)
         elif khadas:
             from ksnn.types import output_format
-            cv_img = [img[0]]
-            # print(img[0].shape)
+            from khadas_post_process.yolov4_process_darknet import yolov4_post_process
+            cv_img = list()
+            # print(np.asarray(im0s).shape)
+            # print(im0s.shape)
+            # print(img.shape)
+            # resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+            resize_img = cv2.resize(img[0], (imgsz[0], imgsz[0]))
+            #if len(np.asarray(img).shape) != 4:
+            #    cv_img.append(img)
+            #else: 
+            #    cv_img.append(img[0])
+            
+            if len(np.asarray(resize_img).shape) != 4:
+                cv_img.append(resize_img)
+            print(cv_img[0].shape)
             # cv_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) # converts img from numpy to opencv array format
             pred = [yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
             # img_size_orginal = im0s.shape[0:2]
-            resize_img_size = resize_img.shape[0:2]
+            # resize_img_size = resize_img.shape[0:2]
             # pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
             #print(pred[:5])
             #print(pred[0].shape[1])
-            #print(pred.shape)
+            #print(len(pred[0]))
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -296,10 +337,16 @@ def run(weights='yolov4.pt',  # model.pt path(s)
 
         # NMS
         if khadas: 
-            from khadas_post_process.yolov4_process_updated import yolov4_post_process
+            from khadas_post_process.yolov4_process_darknet import yolov4_post_process, draw
             # img_size_orginal = im0s.shape[0:2]
-            resize_img_size = resize_img.shape[0:2]
-            pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            # img_size = img.shape[1:3]
+            img_size = im0s.shape[0:2]
+            # print(img_size)
+            pred = yolov4_post_process(pred, img_size=img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
+            #print(pred[0][:5])
+            # print(pred[0].numpy().shape)
+            # pred = pred[0]
+            # pred = torch.from_numpy(pred)
         else:
             pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -317,79 +364,148 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
 
-            if len(det):
-                if khadas:
-                    # 1. Get original image dimensions
-                    h, w = im0.shape[:2]
-                    
-                    # 2. Scale normalized [0, 1] coordinates to pixel values
-                    # det[:, :4] contains [x1, y1, x2, y2]
-                    det[:, [0, 2]] *= w  # Scale X coordinates
-                    det[:, [1, 3]] *= h  # Scale Y coordinates
-                    
-                    # 3. Optional: Round to integers for cleaner drawing
-                    det[:, :4] = det[:, :4].round()
-                else:
-                    # Rescale boxes from img_size to im0 size
-                    det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+            # if khadas:
+                # img = img.transpose((0, 3, 1, 2)) # 1x3x640x640
+
             p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # img.jpg
+            if p.name == "0":
+                save_path = str(save_dir / f"{frame}.png")  # img.jpg
+                if webcam:
+                    save_path_org_frame = str(save_dir / f"{frame}_org.png")  # img.jpg
+            else:
+                save_path = str(save_dir / p.name)  # img.jpg
+                
+            # print(save_path)
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
-            s += '%gx%g ' % img.shape[2:]  # print string
+            if khadas:
+                s += '%gx%g ' % img.shape[1:3]  # print string
+            else:
+                s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, pil=not ascii)
+            # if khadas:
+            #     if output is not None and len(output[0]) != 0:
+            #         outputs = output[0].tolist()
+            #         outputs = np.array(outputs)
+            #         boxes = outputs[:, :4]
+            #         scores = outputs[:,4]
+            #         classes = outputs[:,5]
+            #         classes_int = classes.astype(int)
+                    
+            #         list_of_images = draw(resize_img, boxes, scores, classes_int)
+
+            #         if save_txt:
+            #             for box, score, class_int in zip(boxes, scores, classes_int):
+            #                 line = (class_int, box, score) if save_conf else (class_int, box)  # label format
+            #                 with open(txt_path + '.txt', 'a') as f:
+            #                     f.write((f'{line}') + '\n')
+            #         if save_img:
+            #             for image_number in range(int(len(list_of_images)/3)):
+            #                 name_of_results = ["target", "target_location", "all_targets"]
+            #                 for value, data in enumerate(name_of_results):
+            #                     if not save_crop:
+            #                         if value == 0 or value == 1:
+            #                             continue
+            #                         # else:
+            #                             # image_number = 0
+            #                     image_name = f"{save_path}_{data}_{image_number}.jpg"
+            #                     image = list_of_images[value]
+            #                     if image is not None:
+            #                         cv2.imwrite(image_name, image)
+            # else:
             if len(det):
-                # Print results
-                for c in det[:, -1].unique():
-                    if onnx or tflite:
+                if khadas:
+                    det = det.numpy()
+                    # print(det[:, 5].astype(int))
+                    list_of_images, list_of_image_data = draw(resize_img, det[:, :4], det[:, 4], det[:, 5].astype(int))
+                    if save_txt:
+                        for line_array in list_of_image_data:
+                            line = (line_array[0], line_array[1], line_array[2], line_array[3], line_array[4], line_array[5]) if save_conf else (line_array[0], line_array[1], line_array[2], line_array[3], line_array[4])
+                            with open(txt_path + '.txt', 'a') as f:
+                                f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                    
+                    if save_crop:
+                        target = 1
+                        for image_number in range(int(len(list_of_images)/3)):
+                            crop_save_path = str(save_dir / f"{frame}_{target}.png")
+                            image = list_of_images[3*image_number + 1]
+                            # colour, possible_target, current_frame = images
+                            cv2.imwrite(crop_save_path, image)
+                            target += 1
+                    
+                    # if connection:
+                    print(f"\033[1;32m{len(det)} Possible Target Detected \033[1;37;40m")
+                    
+                    with open(save_dir / f'operation_{date_time.day}_{date_time.month}_{date_time.year}_{date_time.hour}_{date_time.minute}_{date_time.second}.txt', 'a') as f:
+                        new_date_time = datetime.datetime.now()
+                        f.write(("Time:  %s:%s:%s") % (new_date_time.hour, new_date_time.minute, new_date_time.second) + ' - ')
+                        f.write(f"{len(det)} Possible Target Detected saved under the name {frame} \n")
+                    
+                else:
+                    # Rescale boxes from img_size to im0 size
+                    det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+    
+                    # Print results
+                    for c in det[:, -1].unique():
+                        if onnx or tflite:
+                            n = (det[:, -1] == c).sum()  # detections per class
+                            s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
                         n = (det[:, -1] == c).sum()  # detections per class
                         s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-
-                # Write results
-                for *xyxy, conf, cls in reversed(det):
-                    if save_txt:  # Write to file
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
-                    if save_img or save_crop or view_img:  # Add bbox to image
-                        c = int(cls)  # integer class
-                        label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
-                        annotator.box_label(xyxy, label, color=colors(c, True))
-                        if save_crop:
-                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+    
+                    # Write results
+                    for *xyxy, conf, cls in reversed(det):
+                        if save_txt:  # Write to file
+                            xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                            line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
+                            # line = (cls, *xyxy, conf) if save_conf else (cls, *xyxy)  # label format
+                            with open(txt_path + '.txt', 'a') as f:
+                                f.write(('%g ' * len(line)).rstrip() % line + '\n')
+    
+                        if save_img or save_crop or view_img:  # Add bbox to image
+                            c = int(cls)  # integer class
+                            label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
+                            annotator.box_label(xyxy, label, color=colors(c, True))
+                            if save_crop:
+                                save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
             # Print time (inference + NMS)
+            # if connection:
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
-            # # Stream results
-            im0 = annotator.result()
-            if view_img:
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+            # Stream results
+            if khadas:
+                if len(list_of_images) > 0:
+                    number_of_set_of_images = len(list_of_images)
+                    im0 = list_of_images[number_of_set_of_images - 1]
+            else:
+                im0 = annotator.result()
+                if view_img:
+                    cv2.imshow(str(p), img_org_undistorted)
+                    cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
-            if save_img:
-                if dataset.mode == 'images':
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
-                    if vid_path[i] != save_path:  # new video
-                        vid_path[i] = save_path
-                        if isinstance(vid_writer[i], cv2.VideoWriter):
-                            vid_writer[i].release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                            save_path += '.mp4'
-                        vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer[i].write(im0)
+            if len(det):
+                if save_img:
+                    if dataset.mode == 'images':
+                        cv2.imwrite(save_path, im0)
+                        if webcam:
+                            cv2.imwrite(save_path_org_frame, im0s)
+                    else:  # 'video' or 'stream'
+                        if vid_path[i] != save_path:  # new video
+                            vid_path[i] = save_path
+                            if isinstance(vid_writer[i], cv2.VideoWriter):
+                                vid_writer[i].release()  # release previous video writer
+                            if vid_cap:  # video
+                                fps = vid_cap.get(cv2.CAP_PROP_FPS)
+                                w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                                h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            else:  # stream
+                                fps, w, h = 30, im0.shape[1], im0.shape[0]
+                                save_path += '.mp4'
+                            vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+                        vid_writer[i].write(im0)
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
