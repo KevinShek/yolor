@@ -64,6 +64,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         auto=True, # auto is for dynamic models but for static models turn this "False"
         opencv_onnx=False 
         ):
+        
     if not auto:
         auto = False
     save_img = True #not nosave and not source.endswith('.txt')  # save inference images
@@ -89,9 +90,9 @@ def run(weights='yolov4.pt',  # model.pt path(s)
     stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
     pt_jit = pt and 'torchscript' in w
     if khadas:
-        opt.device = "cpu"
+        device = "cpu"
     if not opencv_onnx:
-      device = select_device(opt.device, batch_size=1)
+      device = select_device(device, batch_size=1)
     if not khadas and not opencv_onnx:
         half &= device.type != 'cpu'  # half precision only supported on CUDA
     if pt:
@@ -115,7 +116,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         model = cv2.dnn.readNet(w, "cfg/yolov4-csp-herdial.cfg","darknet")
         # Setting what processor to use the model
         
-        if opt.device == "cpu":
+        if device == "cpu":
             # CPU
             model.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
             model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -127,7 +128,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         output_names = model.getUnconnectedOutLayersNames()
     elif trt:
         from trt_loader.trt_loader import TrtModel
-        model = TrtModel(w, imgsz, total_classes=len(opt.names))
+        model = TrtModel(w, imgsz, total_classes=len(names))
     elif khadas:
         from ksnn.api import KSNN
         level = 0
@@ -244,7 +245,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = torch.from_numpy(pred)
             # img size is normally dynamic allow for inputs such as 1,3,512,640 however if it is static input then turn off auto in the dataset so it will always give 1,3,640,640
             # pred = torch.tensor(session.run(None, {session.get_inputs()[0].name: img}))
-            if opt.device == "0": 
+            if device == "0": 
                 pred = pred.to(device)
         elif opencv_onnx:
             model.setInput(img)
@@ -252,7 +253,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             pred = torch.from_numpy(pred)
         elif trt:
             pred = torch.tensor(model.run(img))
-            if opt.device == "0": 
+            if device == "0": 
                 pred = pred.to(device)
         elif khadas:
             from ksnn.types import output_format
@@ -291,7 +292,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             resize_img_size = resize_img.shape[0:2]
             pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
         else:
-            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+            pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms)
         t2 = time_sync()
         t2_number += time_sync() - t1_5
 
