@@ -26,13 +26,14 @@ settings_default:
   library: None           # for khadas
   auto: 1                 # auto is for dynamic models but for static models turn this 0
   opencv_onnx: 0          # are you using opencv to load onnx models?
+  scalefill: 0            # if you want your images to be a strench resize as an input
 
 settings:
-  weights: '../weights/yolov4-csp-all-environment-640/yolov4-csp-all-environment-640.nb'
+  weights: '../weights/yolov4-csp-640-640-herdial/yolov4-csp-640-640-herdial.nb'
   source: '0'
   imgsz: [640]
-  conf_thres: 0.37
-  iou_thres: 0.3
+  conf_thres: 0.4
+  iou_thres: 0.45
   max_det: 300
   device: ''
   view_img: 0
@@ -52,6 +53,10 @@ settings:
   hide_labels: 0
   hide_conf: 0
   half: 0
-  library: '../weights/yolov4-csp-all-environment-640/libnn_yolov4-csp-all-environment-640.so'
-  auto: 1
+  library: '../weights/yolov4-csp-640-640-herdial/libnn_yolov4-csp-640-640-herdial.so'
+  auto: 0
   opencv_onnx: 0 
+  scalefill: 1
+
+# weights: '../weights/yolov4-csp-all-environment-640/yolov4-csp-all-environment-640.nb'
+# library: '../weights/yolov4-csp-all-environment-640/libnn_yolov4-csp-all-environment-640.so'

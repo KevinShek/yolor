@@ -153,7 +153,7 @@ class _RepeatSampler(object):
 
 
 class LoadImages:  # for inference
-    def __init__(self, path, img_size=640, auto_size=64, auto=True):
+    def __init__(self, path, img_size=640, auto_size=64, auto=True, scalefill=False):
         p = str(Path(path))  # os-agnostic
         p = os.path.abspath(p)  # absolute path
         if '*' in p:
@@ -172,6 +172,7 @@ class LoadImages:  # for inference
         self.img_size = img_size
         self.auto_size = auto_size
         self.auto = auto
+        self.scalefill = scalefill
         self.files = images + videos
         self.nf = ni + nv  # number of files
         self.video_flag = [False] * ni + [True] * nv
@@ -217,7 +218,7 @@ class LoadImages:  # for inference
             print('image %g/%g %s: ' % (self.count, self.nf, path), end='')
 
         # Padded resize
-        img = letterbox(img0, new_shape=self.img_size, auto_size=self.auto_size, auto=self.auto)[0]
+        img = letterbox(img0, new_shape=self.img_size, auto_size=self.auto_size, auto=self.auto, scaleFill=self.scalefill)[0]
         # Convert
         # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
@@ -321,10 +322,12 @@ class LoadWebcam:  # for inference
 
 
 class LoadStreams:  # multiple IP or RTSP cameras
-    def __init__(self, sources='streams.txt', img_size=640, khadas_camera=False, auto=True):
+    def __init__(self, sources='streams.txt', img_size=640, auto_size=64, khadas_camera=False, auto=True, scalefill=False):
         self.mode = 'images'
         self.img_size = img_size
         self.auto = auto
+        self.auto_size = auto_size
+        self.scalefill = scalefill
         self.config = Settings()
         self.khadas_camera = khadas_camera
 
@@ -423,7 +426,13 @@ class LoadStreams:  # multiple IP or RTSP cameras
       		          img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
                 elif self.config.angle.lower() == "upsidedown":
       		          img = cv2.rotate(img, cv2.ROTATE_180)
-                              
+                
+            img = letterbox(img, new_shape=self.img_size, auto_size=self.auto_size, auto=self.auto, scaleFill=self.scalefill)[0]
+            # Convert
+            # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+            img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            img = np.ascontiguousarray(img)
+                          
         else:
             img0 = self.imgs.copy()
             
@@ -436,6 +445,8 @@ class LoadStreams:  # multiple IP or RTSP cameras
             # Convert
             img = img[:, :, :, ::-1].transpose(0, 3, 1, 2)  # BGR to RGB, to bsx3x416x416
             img = np.ascontiguousarray(img)
+            
+
 
         return self.sources, img, img0, None
 

@@ -34,6 +34,10 @@ from utils.general import check_img_size, check_imshow, check_requirements, chec
 from utils.plots import Annotator, colors
 from utils.torch_utils import select_device, load_classifier, time_sync
 
+# for khadas_camera_to_undistort it
+class MyClass():
+    def __init__(self, param):
+        self.param = param
 
 @torch.no_grad()
 def run(weights='yolov4.pt',  # model.pt path(s)
@@ -62,7 +66,8 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         half=False,  # use FP16 half-precision inference
         library=None, # for khadas
         auto=True, # auto is for dynamic models but for static models turn this "False"
-        opencv_onnx=False 
+        opencv_onnx=False,
+        scalefill = False # scale the image to be a strench resize 
         ):
         
     if not auto:
@@ -178,10 +183,10 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         view_img = check_imshow()
         if not khadas:
             cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride, auto=auto)
+        dataset = LoadStreams(source, img_size=imgsz, auto_size=stride, khadas_camera=khadas, auto=auto, scalefill=scalefill)
         bs = len(dataset)  # batch_size
     else:
-        dataset = LoadImages(source, img_size=imgsz, auto_size=stride, auto=auto)
+        dataset = LoadImages(source, img_size=imgsz, auto_size=stride, auto=auto, scalefill=scalefill)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -211,7 +216,13 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             img = img.numpy()
             img = img.astype('float16')
         elif khadas:
-            resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+            # resize_img = cv2.resize(im0s, (imgsz[0], imgsz[0]))
+            print(im0s.shape)
+            resize_img = img[::-1].transpose((1,2,0)) # RGB to BGR (640, 640, 3) 
+            resize_img = np.ascontiguousarray(resize_img)
+            # resize_img = resize_img.transpose((1,2,0)) # (640, 640, 3)
+            print(img.shape)
+            print(resize_img.shape)
             # img = resize_img.astype(np.float32)
             # img = img.transpose((2, 0, 1)) # 640x640x3
         elif saved_model:
@@ -259,7 +270,6 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             from ksnn.types import output_format
             cv_img = [img[0]]
             pred = [yolo.nn_inference(cv_img, platform='DARKNET', reorder='2 1 0', output_tensor=3, output_format=output_format.OUT_FORMAT_FLOAT32)]
-            resize_img_size = resize_img.shape[0:2]
         else:  # tensorflow model (tflite, pb, saved_model)
             imn = img.permute(0, 2, 3, 1).cpu().numpy()  # image in numpy
             if pb:
@@ -290,6 +300,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
             from khadas_post_process.yolov4_process_updated import yolov4_post_process
             # img_size_orginal = im0s.shape[0:2]
             resize_img_size = resize_img.shape[0:2]
+#            print(f"resize img = {resize_img_size}, org = {img_size_orginal}")
             pred = yolov4_post_process(pred, img_size=resize_img_size, OBJ_THRESH=conf_thres, NMS_THRESH=iou_thres, MAX_BOXES=max_det)
         else:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms)
@@ -303,14 +314,33 @@ def run(weights='yolov4.pt',  # model.pt path(s)
         # Process predictions
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
-                p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
+            
+                if len(im0s.shape) == 4:
+                    im0 = im0s[i].copy()
+                else:
+                    im0 = im0s.copy() # It's already a single (H, W, C) frame
+                p, s, frame = path[i], f'{i}: ', dataset.count
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
 
             if len(det):
                 if khadas:
+                  if scalefill == False:
+                    # 1. Get the network size (height, width) from the processed img shape
+                    # If img is (3, 640, 640), img.shape[1:] gives (640, 640)
+                    net_h, net_w = img.shape[1:3] 
+                    
+                    # 2. Scale normalized coordinates to the NETWORK size, not im0 size
+                    det[:, [0, 2]] *= net_w  # Scale X to 640
+                    det[:, [1, 3]] *= net_h  # Scale Y to 640
+                    
+                    # 3. Use scale_coords to strip letterbox padding and map to im0
+                    det[:, :4] = scale_coords(img.shape[1:3], det[:, :4], im0.shape).round()
+                  else:
                     # 1. Get original image dimensions
                     h, w = im0.shape[:2]
+                    
+                    print(im0.shape)
                     
                     # 2. Scale normalized [0, 1] coordinates to pixel values
                     # det[:, :4] contains [x1, y1, x2, y2]
@@ -323,7 +353,13 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                     # Rescale boxes from img_size to im0 size
                     det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
             p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # img.jpg
+            if p.name == "0":
+                save_path = str(save_dir / f"{frame}.png")  # img.jpg
+                if webcam:
+                    save_path_org_frame = str(save_dir / f"{frame}_org.png")  # img.jpg
+                    save_path_distorted_frame = str(save_dir / f"{frame}_distort.png")  # img.jpg
+            else:
+                save_path = str(save_dir / p.name)  # img.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
             s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
@@ -351,7 +387,7 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
                         if save_crop:
-                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}_{i}.jpg', BGR=True)
 
                 # if connection:
                 print(f"\033[1;32m{len(det)} Possible Target Detected \033[1;37;40m")
@@ -371,23 +407,37 @@ def run(weights='yolov4.pt',  # model.pt path(s)
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
-            if save_img:
-                if dataset.mode == 'images':
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
-                    if vid_path[i] != save_path:  # new video
-                        vid_path[i] = save_path
-                        if isinstance(vid_writer[i], cv2.VideoWriter):
-                            vid_writer[i].release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                            save_path += '.mp4'
-                        vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer[i].write(im0)
+            if len(det):
+                if save_img:
+                    if dataset.mode == 'images':
+                        cv2.imwrite(save_path, im0)
+                        if webcam:
+                            cv2.imwrite(save_path_org_frame, im0s)
+                            img = img[0]
+                            # Normalize the 640x640 model input back to integers for libpng saving
+                            if img.dtype != np.uint8:
+                                # If it's a normalized float [0-1], bring it back to [0-255]
+                                if img.max() <= 1.0:
+                                    distort_ready_img = (img * 255).astype(np.uint8)
+                                else:
+                                    distort_ready_img = img.astype(np.uint8)
+                            else:
+                                distort_ready_img = img
+                            cv2.imwrite(save_path_distorted_frame, distort_ready_img)
+                    else:  # 'video' or 'stream'
+                        if vid_path[i] != save_path:  # new video
+                            vid_path[i] = save_path
+                            if isinstance(vid_writer[i], cv2.VideoWriter):
+                                vid_writer[i].release()  # release previous video writer
+                            if vid_cap:  # video
+                                fps = vid_cap.get(cv2.CAP_PROP_FPS)
+                                w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                                h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            else:  # stream
+                                fps, w, h = 30, im0.shape[1], im0.shape[0]
+                                save_path += '.mp4'
+                            vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+                        vid_writer[i].write(im0)
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
@@ -433,6 +483,7 @@ def parse_opt():
     parser.add_argument('--library', type=str, default='', help='the library made with khadas converter')
     parser.add_argument('--auto', action='store_true', help='Turn this on if you using dynamic inputs but if you are using static inputs then turn this False')
     parser.add_argument('--opencv_onnx', default=False, action='store_true', help='are ypu using opencv to load onnx models?')
+    parser.add_argument('--scalefill', action='store_true', help='Turn this on if you want your images to be a strench resize as an input')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     return opt

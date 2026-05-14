@@ -2,6 +2,12 @@ from utils.read_settings import load_config
 from utils.general import colorstr
 from detection_script_v2 import run
 
+# for khadas_camera_to_undistort it
+class MyClass():
+    def __init__(self, param):
+        self.param = param
+
+
 def read_settings():
     settings = load_config(file_path="config.yaml", section="settings")
     settings["imgsz"] *= 2 if len(settings["imgsz"]) == 1 else 1  # expand
